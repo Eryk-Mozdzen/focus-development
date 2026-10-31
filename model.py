@@ -25,7 +25,10 @@ def curve_fit(model, x_data, y_data, **kwargs):
     y_data = y_data[keep]
 
     while True:
-        popt, pcov = scipy.optimize.curve_fit(model, x_data, y_data, **kwargs)
+        try:
+            popt, pcov = scipy.optimize.curve_fit(model, x_data, y_data, **kwargs)
+        except RuntimeError:
+            break
 
         residuals = y_data - model(x_data, *popt)
         sigma = residuals.std(ddof=1)
@@ -116,7 +119,7 @@ rotor_field = np.pi * (rotor_radius**2)
 dry_air_gas_constant = 287.05
 air_pressure = 101325  # sea level
 [air_temperature], _, _ = curve_fit(
-    lambda x, temperature: temperature,
+    lambda _, temperature: temperature,
     df["timestamp"],
     df["true_temperature"],
 )
@@ -182,7 +185,7 @@ plt.grid()
 plt.legend()
 
 [eff], _, eff_keep = curve_fit(
-    lambda x, eta: eta,
+    lambda _, eta: eta,
     df["true_velocity"],
     df["propeller_efficiency"],
 )
