@@ -17,7 +17,12 @@ import sys
 
 
 def curve_fit(model, x_data, y_data, **kwargs):
-    keep = np.ones(len(x_data), dtype=bool)
+    x_data = np.asarray(x_data, dtype=float)
+    y_data = np.asarray(y_data, dtype=float)
+
+    keep = np.isfinite(x_data) & np.isfinite(y_data)
+    x_data = x_data[keep]
+    y_data = y_data[keep]
 
     while True:
         popt, pcov = scipy.optimize.curve_fit(model, x_data, y_data, **kwargs)

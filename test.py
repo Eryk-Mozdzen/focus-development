@@ -61,9 +61,9 @@ class Bus:
 
 class Experiment:
     def __init__(self):
-        self.value = 0.02
-        self.value_max = 0.2
-        self.step_value = 0.002
+        self.value = 0
+        self.value_max = 0.3
+        self.step_value = 0.005
         self.step_duration = 2
 
     async def run(self, queue, focus):
