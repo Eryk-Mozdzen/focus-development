@@ -46,7 +46,12 @@ def curve_fit(model, x_data, y_data, **kwargs):
     return popt, pcov, keep
 
 
-df = pd.read_csv(sys.argv[1], parse_dates=["timestamp"]).dropna()
+df = (
+    pd.read_csv(sys.argv[1], parse_dates=["timestamp"])
+    .drop(columns=["focus_voltage", "focus_velocity"])
+    .replace([np.inf, -np.inf], np.nan)
+    .dropna()
+)
 
 w = np.linspace(0, max(df["true_velocity"]), 100)
 
@@ -220,7 +225,7 @@ torque = np.linspace(df["setpoint_torque"].min(), df["setpoint_torque"].max(), 1
 print(f"torque setpoint slope {model2[0]:.3f}")
 
 plt.figure()
-plt.plot(torque, torque, label="model y=x+b", c="red", linestyle="--")
+plt.plot(torque, torque, label="model y=x", c="red", linestyle="--")
 plt.plot(torque, (model2[0] * torque) + model2[1], label="model y=ax+b", c="red")
 plt.scatter(
     df["setpoint_torque"].iloc[model2_keep],
