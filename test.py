@@ -331,19 +331,19 @@ class Recorder:
 
 async def main():
     async with (
-        # Focus("192.168.8.1") as focus,
+        Focus("192.168.8.1") as focus,
         Bench("ws://192.168.7.2:81/data") as bench,
     ):
         bus = Bus()
 
-        # experiment = Experiment()
+        experiment = Experiment()
         plotter1 = Plotter(["true_velocity", "focus_velocity"])
         plotter2 = Plotter(["setpoint_torque", "true_torque"])
         recorder = Recorder()
 
         tasks = [
-            # asyncio.create_task(experiment.run(bus, focus)),
-            # asyncio.create_task(focus.run(bus)),
+            asyncio.create_task(experiment.run(bus, focus)),
+            asyncio.create_task(focus.run(bus)),
             asyncio.create_task(bench.run(bus)),
             asyncio.create_task(plotter1.run(bus.subscribe())),
             asyncio.create_task(plotter2.run(bus.subscribe())),
