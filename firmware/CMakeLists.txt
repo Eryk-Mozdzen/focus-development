@@ -234,7 +234,7 @@ target_compile_options(${CMAKE_PROJECT_NAME}.elf PRIVATE
 	>
 
 	$<$<COMPILE_LANGUAGE:C>:
-		-O2
+		-O2 -g
 		-std=c23
 		-Wall
         -Wextra

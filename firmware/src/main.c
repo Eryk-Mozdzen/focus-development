@@ -136,52 +136,63 @@ static void delay_us(const uint32_t time_us) {
     }
 }
 
-#define TACHO_BUFFER 20
+#define TACHO_BUFFER 21
 
 typedef struct {
-    uint32_t rotations;
-    uint32_t timestamp;
-} tacho_sample_t;
-
-typedef struct {
-    tacho_sample_t samples[TACHO_BUFFER];
-    uint32_t counter;
-    uint32_t timestamp_last;
+    volatile uint32_t buffer[TACHO_BUFFER];
+    volatile uint32_t buffer_counter;
+    uint32_t last;
 } tacho_t;
 
 static void tacho_init(tacho_t *tacho) {
     for(uint32_t i = 0; i < TACHO_BUFFER; i++) {
-        tacho->samples[i].rotations = 0;
-        tacho->samples[i].timestamp = HAL_GetTick();
+        tacho->buffer[i] = 0;
     }
-    tacho->counter = 0;
-    tacho->timestamp_last = HAL_GetTick();
-
+    tacho->buffer_counter = 0;
+    tacho->last = 0;
     HAL_TIM_Base_Start(&htim2);
-    __HAL_TIM_SET_COUNTER(&htim2, 0);
 }
 
-static void tacho_read(tacho_t *tacho, float *velocity) {
-    const uint32_t timestamp = HAL_GetTick();
+static uint32_t tacho_read(tacho_t *tacho, float *frequency) {
+    const uint32_t now = HAL_GetTick();
 
-    if((timestamp - tacho->timestamp_last) >= 100) {
-        tacho->timestamp_last = timestamp;
+    if((now - tacho->last) >= 100) {
+        tacho->last = now;
 
-        const tacho_sample_t past = tacho->samples[tacho->counter];
+        uint32_t sorted[TACHO_BUFFER];
 
-        tacho->samples[tacho->counter].rotations = __HAL_TIM_GET_COUNTER(&htim2);
-        tacho->samples[tacho->counter].timestamp = timestamp;
+        __disable_irq();
+        memcpy(sorted, (uint32_t *)tacho->buffer, TACHO_BUFFER * sizeof(uint32_t));
+        __enable_irq();
 
-        const float two_pi = 6.283185307f;
-        const float dr = (tacho->samples[tacho->counter].rotations - past.rotations);
-        const float dt = 0.001f * (tacho->samples[tacho->counter].timestamp - past.timestamp);
-
-        *velocity = two_pi * dr / dt;
-
-        tacho->counter++;
-        if(tacho->counter >= TACHO_BUFFER) {
-            tacho->counter = 0;
+        for(uint32_t i = 1; i < TACHO_BUFFER; i++) {
+            const uint32_t key = sorted[i];
+            uint32_t j = i;
+            while((j > 0) && (sorted[j - 1] > key)) {
+                sorted[j] = sorted[j - 1];
+                j--;
+            }
+            sorted[j] = key;
         }
+
+        const uint32_t median_period_us = sorted[TACHO_BUFFER / 2];
+
+        *frequency = 1e+6f / median_period_us;
+
+        return 1;
+    }
+
+    return 0;
+}
+
+static void tacho_isr(tacho_t *tacho) {
+    const uint32_t period_us = __HAL_TIM_GET_COUNTER(&htim2);
+    __HAL_TIM_SET_COUNTER(&htim2, 0);
+
+    tacho->buffer[tacho->buffer_counter] = period_us;
+    tacho->buffer_counter++;
+    if(tacho->buffer_counter >= TACHO_BUFFER) {
+        tacho->buffer_counter = 0;
     }
 }
 
@@ -497,6 +508,14 @@ int fs_read_custom(struct fs_file *file, char *buffer, int count) {
     return read;
 }
 
+tacho_t tacho;
+
+void HAL_GPIO_EXTI_Rising_Callback(uint16_t GPIO_Pin) {
+    if(GPIO_Pin == GPIO_PIN_0) {
+        tacho_isr(&tacho);
+    }
+}
+
 void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart) {
     if(huart == &huart2) {
         send_ready = 1;
@@ -524,6 +543,7 @@ typedef struct {
     float voltage;
     float current;
     int32_t load[3];
+    float frequency;
 } frame_t;
 
 int main() {
@@ -550,7 +570,6 @@ int main() {
 
     HAL_TIM_Base_Start(&htim1);
 
-    tacho_t tacho;
     tacho_init(&tacho);
 
     hx711_t hx711;
@@ -621,7 +640,9 @@ int main() {
             } break;
         }
 
-        tacho_read(&tacho, &frame.velocity);
+        if(tacho_read(&tacho, &frame.frequency)) {
+            frame.velocity = 6.283185307f * frame.frequency;
+        }
 
         if(hx711_read(&hx711, load_raw)) {
             frame.load[0] = load_raw[0] - load_offset[0];
