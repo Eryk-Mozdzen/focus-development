@@ -1,3 +1,12 @@
 [submodule "firmware/lwip"]
 	path = bench/lwip
 	url = https://github.com/lwip-tcpip/lwip.git
+[submodule "focus_platform/firmware/focus"]
+	path = focus_platform/firmware/focus
+	url = https://github.com/Eryk-Mozdzen/focus.git
+[submodule "focus_platform/firmware/lwip"]
+	path = focus_platform/firmware/lwip
+	url = https://github.com/lwip-tcpip/lwip.git
+[submodule "focus_platform/firmware/tinyusb"]
+	path = focus_platform/firmware/tinyusb
+	url = https://github.com/hathach/tinyusb.git

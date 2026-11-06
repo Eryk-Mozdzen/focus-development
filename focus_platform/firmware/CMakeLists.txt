@@ -11,15 +11,15 @@ add_executable(${CMAKE_PROJECT_NAME}.elf
     "src/focus_port.c"
     "src/usb_descriptors.c"
 
-    "../../focus/biquad.c"
-    "../../focus/core.c"
-    "../../focus/debug.c"
-    "../../focus/fsm.c"
-    "../../focus/hfi.c"
-    "../../focus/math_lookup_sin.c"
-    "../../focus/math.c"
-    "../../focus/pid.c"
-    "../../focus/smo.c"
+    "focus/src/biquad.c"
+    "focus/src/core.c"
+    "focus/src/debug.c"
+    "focus/src/fsm.c"
+    "focus/src/hfi.c"
+    "focus/src/math_lookup_sin.c"
+    "focus/src/math.c"
+    "focus/src/pid.c"
+    "focus/src/smo.c"
 
     "lwip/src/api/api_lib.c"
     "lwip/src/api/api_msg.c"
@@ -297,7 +297,7 @@ add_executable(${CMAKE_PROJECT_NAME}.elf
 
 target_include_directories(${CMAKE_PROJECT_NAME}.elf PRIVATE
 	"src/include"
-    "../../focus/include"
+    "focus/include"
     "lwip/src/include"
     "tinyusb/src"
     "tinyusb/lib/networking"
