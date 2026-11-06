@@ -18,6 +18,8 @@ add_executable(${CMAKE_PROJECT_NAME}.elf
     "cubemx/Core/Src/system_stm32u0xx.c"
     "cubemx/startup_stm32u083xx.s"
 
+    "mongoose/mongoose.c"
+
     "lwip/src/api/api_lib.c"
     "lwip/src/api/api_msg.c"
     "lwip/src/api/err.c"
@@ -213,6 +215,7 @@ add_executable(${CMAKE_PROJECT_NAME}.elf
 target_include_directories(${CMAKE_PROJECT_NAME}.elf PRIVATE
 	"src/include"
     "lwip/src/include"
+    "mongoose"
     "cubemx/Core/Inc"
     "cubemx/Drivers/STM32U0xx_HAL_Driver/Inc"
     "cubemx/Drivers/CMSIS/Include"

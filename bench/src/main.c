@@ -8,6 +8,7 @@
 #include <lwip/init.h>
 #include <lwip/sys.h>
 #include <lwip/timeouts.h>
+#include <mongoose.h>
 #include <netif/ppp/ppp.h>
 #include <netif/ppp/pppos.h>
 
@@ -546,6 +547,14 @@ typedef struct {
     float frequency;
 } frame_t;
 
+void ev_handler(struct mg_connection *c, int ev, void *ev_data) {
+    if(ev == MG_EV_HTTP_MSG) {
+        struct mg_http_message *hm = (struct mg_http_message *)ev_data;
+        struct mg_http_serve_opts opts = {.root_dir = "./web_root/"};
+        mg_http_serve_dir(c, hm, &opts);
+    }
+}
+
 int main() {
     HAL_Init();
     SystemClock_Config();
@@ -560,6 +569,10 @@ int main() {
     struct netif netif = {0};
     ppp_pcb *ppp = pppos_create(&netif, ppp_output_cb, ppp_link_status_cb, &context);
     ppp_set_default(ppp);
+
+    struct mg_mgr mgr;
+    mg_mgr_init(&mgr);
+    mg_http_listen(&mgr, "http://0.0.0.0:8000", ev_handler, NULL);
 
     websocket_server_t *ws_server = NULL;
 

@@ -10,3 +10,6 @@
 [submodule "focus_platform/firmware/tinyusb"]
 	path = focus_platform/firmware/tinyusb
 	url = https://github.com/hathach/tinyusb.git
+[submodule "bench/mongoose"]
+	path = bench/mongoose
+	url = https://github.com/cesanta/mongoose.git
