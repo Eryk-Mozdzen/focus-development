@@ -1,4 +1,4 @@
-# Thrust bench
+# FOCUS development platform & thrust bench
 
 ## Build
 

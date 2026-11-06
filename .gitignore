@@ -6,4 +6,21 @@ build
 
 .vscode
 
+build
+gerbers
+
+\#auto_saved_files#
+fp-info-cache
+*-backups
+*.lck
+*.bak
+*.kicad_prl
+.history
+
+**/cubemx/*
+!**/cubemx.ioc
+*.out
+*.o
+generate_math_lookup_sin
+
 *.csv
