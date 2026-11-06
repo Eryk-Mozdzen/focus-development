@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.16)
 
 set(CMAKE_TOOLCHAIN_FILE "toolchain.cmake")
 
-project(firmware)
+project(bench)
 
 enable_language(ASM C)
 
@@ -270,3 +270,8 @@ include(embed.cmake)
 target_embed_file(${CMAKE_PROJECT_NAME}.elf "${CMAKE_SOURCE_DIR}/web/index.html")
 target_embed_file(${CMAKE_PROJECT_NAME}.elf "${CMAKE_SOURCE_DIR}/web/style.css")
 target_embed_file(${CMAKE_PROJECT_NAME}.elf "${CMAKE_SOURCE_DIR}/web/script.js")
+
+add_custom_target(flash
+    STM32_Programmer_CLI -c port=SWD -w bench.elf -rst
+    DEPENDS ${CMAKE_PROJECT_NAME}.elf
+)
