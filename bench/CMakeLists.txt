@@ -272,6 +272,6 @@ target_embed_file(${CMAKE_PROJECT_NAME}.elf "${CMAKE_SOURCE_DIR}/web/style.css")
 target_embed_file(${CMAKE_PROJECT_NAME}.elf "${CMAKE_SOURCE_DIR}/web/script.js")
 
 add_custom_target(flash
-    STM32_Programmer_CLI -c port=SWD -w bench.elf -rst
+    STM32_Programmer_CLI -c port=SWD -w ${CMAKE_PROJECT_NAME}.elf -rst
     DEPENDS ${CMAKE_PROJECT_NAME}.elf
 )

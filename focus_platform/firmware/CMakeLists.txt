@@ -362,3 +362,8 @@ add_custom_command(TARGET ${CMAKE_PROJECT_NAME}.elf POST_BUILD
     COMMAND ${CMAKE_OBJDUMP} -j .text -D ${CMAKE_PROJECT_NAME}.elf > ${CMAKE_PROJECT_NAME}.dump
 	COMMAND ${CMAKE_SIZE} ${CMAKE_PROJECT_NAME}.elf
 )
+
+add_custom_target(flash
+    STM32_Programmer_CLI -c port=SWD -w ${CMAKE_PROJECT_NAME}.elf -rst
+    DEPENDS ${CMAKE_PROJECT_NAME}.elf
+)
