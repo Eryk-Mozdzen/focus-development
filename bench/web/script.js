@@ -1,4 +1,4 @@
-const ws = new WebSocket("ws://" + location.host + ":81/data")
+const ws = new WebSocket("ws://" + location.host + ":80/websocket")
 
 ws.binaryType = "arraybuffer"
 

@@ -509,13 +509,18 @@ static inline void tx_store(struct mg_connection *c, const struct tx *t) {
 static void fn(struct mg_connection *c, int ev, void *ev_data) {
     if(ev == MG_EV_HTTP_MSG) {
         struct mg_http_message *hm = (struct mg_http_message *)ev_data;
-        struct mg_str uri = hm->uri;
-        if(mg_strcmp(uri, mg_str("/")) == 0) {
-            uri = mg_str("/index.html");
+
+        if(mg_match(hm->uri, mg_str("/websocket"), NULL)) {
+            mg_ws_upgrade(c, hm, NULL);
+            return;
+        }
+
+        if(mg_strcmp(hm->uri, mg_str("/")) == 0) {
+            hm->uri = mg_str("/index.html");
         }
 
         for(size_t i = 0; i < sizeof(assets) / sizeof(assets[0]); i++) {
-            if(mg_strcmp(uri, mg_str(assets[i].uri)) != 0) {
+            if(mg_strcmp(hm->uri, mg_str(assets[i].uri)) != 0) {
                 continue;
             }
 
@@ -556,6 +561,18 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
                 c->is_draining = 1;
             }
         }
+    } else if(ev == MG_EV_WS_MSG) {
+        // struct mg_ws_message *wm = (struct mg_ws_message *)ev_data;
+
+        static int xd = 0;
+        xd++;
+
+        frame_t frame = {
+            .current = xd,
+            .frequency = 4.20f,
+        };
+
+        mg_ws_send(c, &frame, sizeof(frame), WEBSOCKET_OP_BINARY);
     }
 }
 
