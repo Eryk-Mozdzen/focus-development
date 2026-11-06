@@ -1,6 +1,3 @@
-[submodule "firmware/lwip"]
-	path = bench/lwip
-	url = https://github.com/lwip-tcpip/lwip.git
 [submodule "focus_platform/firmware/focus"]
 	path = focus_platform/firmware/focus
 	url = https://github.com/Eryk-Mozdzen/focus.git

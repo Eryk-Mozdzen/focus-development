@@ -2,18 +2,10 @@
 
 #include <stm32u0xx_hal.h>
 
-#include <lwip/apps/fs.h>
-#include <lwip/apps/httpd.h>
-#include <lwip/apps/lwiperf.h>
-#include <lwip/init.h>
-#include <lwip/sys.h>
-#include <lwip/timeouts.h>
+#include <mg_pppos.h>
 #include <mongoose.h>
-#include <netif/ppp/ppp.h>
-#include <netif/ppp/pppos.h>
 
 #include "ina226_regs.h"
-#include "websocket.h"
 
 typedef struct {
     uint8_t buffer[1024];
@@ -97,7 +89,7 @@ static uint32_t fifo_read(fifo_t *fifo, uint8_t *dst, const uint32_t dst_capacit
     return num;
 }
 
-static void ppp_link_status_cb(ppp_pcb *pcb, int err_code, void *ctx) {
+/*static void ppp_link_status_cb(ppp_pcb *pcb, int err_code, void *ctx) {
     (void)pcb;
 
     context_t *context = ctx;
@@ -107,17 +99,14 @@ static void ppp_link_status_cb(ppp_pcb *pcb, int err_code, void *ctx) {
             context->state = STATE_CONNECTED;
         }
     }
+}*/
+
+static size_t ppp_output(const void *data, size_t len, void *arg) {
+    context_t *context = arg;
+    return fifo_write(&context->fifo_tx, data, len);
 }
 
-static uint32_t ppp_output_cb(ppp_pcb *pcb, const void *data, uint32_t data_size, void *ctx) {
-    (void)pcb;
-
-    context_t *context = ctx;
-
-    return fifo_write(&context->fifo_tx, data, data_size);
-}
-
-static void ws_on_message_cb(void *arg,
+/*static void ws_on_message_cb(void *arg,
                              struct websocket_client *client,
                              const void *message,
                              u32_t message_len) {
@@ -129,7 +118,7 @@ static void ws_on_message_cb(void *arg,
     if(strcmp(message, "offset") == 0) {
         context->button = BUTTON_OFFSET;
     }
-}
+}*/
 
 static void delay_us(const uint32_t time_us) {
     __HAL_TIM_SET_COUNTER(&htim1, 0);
@@ -447,68 +436,6 @@ static void ds18b20_read(ds18b20_t *ds18b20, float *temperature) {
     }
 }
 
-sys_prot_t sys_arch_protect() {
-    return 0;
-}
-
-void sys_arch_unprotect(sys_prot_t pval) {
-    (void)pval;
-}
-
-uint32_t sys_now() {
-    return HAL_GetTick();
-}
-
-uint32_t sys_jiffies() {
-    return HAL_GetTick();
-}
-
-int fs_open_custom(struct fs_file *file, const char *name) {
-    if((strcmp(name, "") == 0) || (strcmp(name, "/") == 0)) {
-        name = "index.html";
-    }
-
-    if(strcmp(name, "/index.html") == 0) {
-        file->data = _binary_index_html_start;
-        file->len = _binary_index_html_end - _binary_index_html_start;
-        file->index = 0;
-        file->flags = 0;
-        return 1;
-    }
-
-    if(strcmp(name, "/style.css") == 0) {
-        file->data = _binary_style_css_start;
-        file->len = _binary_style_css_end - _binary_style_css_start;
-        file->index = 0;
-        file->flags = 0;
-        return 1;
-    }
-
-    if(strcmp(name, "/script.js") == 0) {
-        file->data = _binary_script_js_start;
-        file->len = _binary_script_js_end - _binary_script_js_start;
-        file->index = 0;
-        file->flags = 0;
-        return 1;
-    }
-
-    return 0;
-}
-
-void fs_close_custom(struct fs_file *file) {
-    (void)file;
-}
-
-int fs_read_custom(struct fs_file *file, char *buffer, int count) {
-    int read = file->len - file->index;
-    if(read > count) {
-        read = count;
-    }
-    memcpy(buffer, (file->data + file->index), read);
-    file->index += read;
-    return read;
-}
-
 tacho_t tacho;
 
 void HAL_GPIO_EXTI_Rising_Callback(uint16_t GPIO_Pin) {
@@ -547,11 +474,88 @@ typedef struct {
     float frequency;
 } frame_t;
 
-void ev_handler(struct mg_connection *c, int ev, void *ev_data) {
+uint64_t mg_millis(void) {
+    return HAL_GetTick();
+}
+
+#define CHUNK 512
+
+struct asset {
+    const char *uri;
+    const char *mime;
+    const char *start;
+    const char *end;
+};
+
+struct tx {
+    const char *p;
+    size_t left;
+};
+
+static const struct asset assets[] = {
+    {"/index.html", "text/html",              _binary_index_html_start, _binary_index_html_end},
+    {"/style.css",  "text/css",               _binary_style_css_start,  _binary_style_css_end },
+    {"/script.js",  "application/javascript", _binary_script_js_start,  _binary_script_js_end },
+};
+
+static inline void tx_load(struct mg_connection *c, struct tx *t) {
+    memcpy(t, c->data, sizeof(*t));
+}
+
+static inline void tx_store(struct mg_connection *c, const struct tx *t) {
+    memcpy(c->data, t, sizeof(*t));
+}
+
+static void fn(struct mg_connection *c, int ev, void *ev_data) {
     if(ev == MG_EV_HTTP_MSG) {
         struct mg_http_message *hm = (struct mg_http_message *)ev_data;
-        struct mg_http_serve_opts opts = {.root_dir = "./web_root/"};
-        mg_http_serve_dir(c, hm, &opts);
+        struct mg_str uri = hm->uri;
+        if(mg_strcmp(uri, mg_str("/")) == 0) {
+            uri = mg_str("/index.html");
+        }
+
+        for(size_t i = 0; i < sizeof(assets) / sizeof(assets[0]); i++) {
+            if(mg_strcmp(uri, mg_str(assets[i].uri)) != 0) {
+                continue;
+            }
+
+            size_t len = (size_t)(assets[i].end - assets[i].start);
+
+            mg_printf(c,
+                      "HTTP/1.1 200 OK\r\n"
+                      "Content-Type: %s\r\n"
+                      "Content-Length: %lu\r\n"
+                      "Connection: close\r\n"
+                      "\r\n",
+                      assets[i].mime, (unsigned long)len);
+
+            struct tx t = {assets[i].start, len};
+            tx_store(c, &t);
+            return;
+        }
+        mg_http_reply(c, 404, "Connection: close\r\n", "Not found\n");
+
+    } else if(ev == MG_EV_POLL || ev == MG_EV_WRITE) {
+        if(c->is_listening || c->is_draining || c->is_closing) {
+            return;
+        }
+
+        struct tx t;
+        tx_load(c, &t);
+        if(t.left == 0) {
+            return;
+        }
+
+        if(c->send.len < CHUNK) {
+            size_t n = t.left < CHUNK ? t.left : CHUNK;
+            mg_send(c, t.p, n);
+            t.p += n;
+            t.left -= n;
+            tx_store(c, &t);
+            if(t.left == 0) {
+                c->is_draining = 1;
+            }
+        }
     }
 }
 
@@ -564,17 +568,20 @@ int main() {
     MX_I2C3_Init();
     MX_USART2_UART_Init();
 
-    lwip_init();
-
-    struct netif netif = {0};
-    ppp_pcb *ppp = pppos_create(&netif, ppp_output_cb, ppp_link_status_cb, &context);
-    ppp_set_default(ppp);
-
     struct mg_mgr mgr;
     mg_mgr_init(&mgr);
-    mg_http_listen(&mgr, "http://0.0.0.0:8000", ev_handler, NULL);
 
-    websocket_server_t *ws_server = NULL;
+    struct mg_pppos pppos;
+    mg_pppos_init_state(&pppos, ppp_output, NULL, NULL, &context);
+
+    struct mg_tcpip_if netif = {0};
+    netif.driver = mg_pppos_driver(&pppos);
+    netif.driver_data = &pppos;
+    netif.l2type = MG_TCPIP_L2_PPP;
+    netif.enable_dhcp_client = false;
+    mg_tcpip_init(&mgr, &netif);
+
+    mg_http_listen(&mgr, "http://0.0.0.0:80", fn, NULL);
 
     context.state = STATE_DISCONNECTED;
     fifo_init(&context.fifo_tx);
@@ -594,7 +601,7 @@ int main() {
     ds18b20_t ds18b20;
     ds18b20_init(&ds18b20);
 
-    uint32_t prev1 = 0;
+    // uint32_t prev1 = 0;
     uint32_t prev2 = 0;
     uint8_t send_buffer[1024];
     uint8_t recv_buffer[1024];
@@ -610,7 +617,7 @@ int main() {
         HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5,
                           ((timestamp % 1000) < 50) ? GPIO_PIN_SET : GPIO_PIN_RESET);
 
-        switch(context.state) {
+        /*switch(context.state) {
             case STATE_DISCONNECTED: {
                 context.state = STATE_CONNECTING;
                 ppp_connect(ppp, 0);
@@ -639,7 +646,7 @@ int main() {
                     }
                 }
             } break;
-        }
+        }*/
 
         switch(context.button) {
             case BUTTON_NONE: {
@@ -689,7 +696,7 @@ int main() {
 
         const uint32_t recv_len = fifo_read(&context.fifo_rx, recv_buffer, sizeof(recv_buffer));
         if(recv_len > 0) {
-            pppos_input(ppp, recv_buffer, recv_len);
+            mg_pppos_input(&pppos, recv_buffer, recv_len);
         }
 
         if(send_ready) {
@@ -700,7 +707,7 @@ int main() {
             }
         }
 
-        sys_check_timeouts();
+        mg_mgr_poll(&mgr, 1);
     }
 
     return 0;
