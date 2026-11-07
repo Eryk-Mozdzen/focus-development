@@ -73,7 +73,6 @@ add_executable(${CMAKE_PROJECT_NAME}.elf
 
 target_include_directories(${CMAKE_PROJECT_NAME}.elf PRIVATE
 	"src/include"
-    "lwip/src/include"
     "mongoose"
     "mongoose-pppos"
     "cubemx/Core/Inc"
@@ -114,8 +113,6 @@ target_link_options(${CMAKE_PROJECT_NAME}.elf PRIVATE
 
     -mthumb
 	-mcpu=cortex-m0
-    -specs=nano.specs
-    -specs=nosys.specs
 )
 
 add_custom_command(TARGET ${CMAKE_PROJECT_NAME}.elf POST_BUILD
