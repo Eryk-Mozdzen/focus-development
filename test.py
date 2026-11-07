@@ -332,7 +332,7 @@ class Recorder:
 async def main():
     async with (
         Focus("192.168.8.1") as focus,
-        Bench("ws://192.168.7.2:81/data") as bench,
+        Bench("ws://192.168.7.2:80/websocket") as bench,
     ):
         bus = Bus()
 
