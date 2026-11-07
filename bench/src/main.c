@@ -251,7 +251,9 @@ typedef struct {
 static void hx711_init(hx711_t *hx711) {
     hx711->state = HX711_STATE_IDLE;
 
-    HAL_GPIO_WritePin(GPIOC, GPIO_PIN_12, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_15, GPIO_PIN_RESET);
 }
 
 static uint32_t hx711_read(hx711_t *hx711, int32_t result[3]) {
@@ -264,27 +266,31 @@ static uint32_t hx711_read(hx711_t *hx711, int32_t result[3]) {
             hx711->state = HX711_STATE_SYNC;
         } break;
         case HX711_STATE_SYNC: {
-            if((HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_15) == GPIO_PIN_RESET) &&
-               (HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_11) == GPIO_PIN_RESET) &&
-               (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_7) == GPIO_PIN_RESET)) {
+            if((HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_5) == GPIO_PIN_RESET) &&
+               (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_4) == GPIO_PIN_RESET) &&
+               (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_10) == GPIO_PIN_RESET)) {
                 delay_us(1);
                 hx711->state = HX711_STATE_READ;
             }
         } break;
         case HX711_STATE_READ: {
             if(hx711->bits < 24) {
-                HAL_GPIO_WritePin(GPIOC, GPIO_PIN_12, GPIO_PIN_SET);
+                HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, GPIO_PIN_SET);
+                HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_SET);
+                HAL_GPIO_WritePin(GPIOB, GPIO_PIN_15, GPIO_PIN_SET);
                 delay_us(5);
 
                 hx711->measurement[0] <<= 1;
                 hx711->measurement[1] <<= 1;
                 hx711->measurement[2] <<= 1;
 
-                hx711->measurement[0] |= (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_15) == GPIO_PIN_SET);
-                hx711->measurement[1] |= (HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_11) == GPIO_PIN_SET);
-                hx711->measurement[2] |= (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_7) == GPIO_PIN_SET);
+                hx711->measurement[0] |= (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_5) == GPIO_PIN_SET);
+                hx711->measurement[1] |= (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_4) == GPIO_PIN_SET);
+                hx711->measurement[2] |= (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_10) == GPIO_PIN_SET);
 
-                HAL_GPIO_WritePin(GPIOC, GPIO_PIN_12, GPIO_PIN_RESET);
+                HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, GPIO_PIN_RESET);
+                HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_RESET);
+                HAL_GPIO_WritePin(GPIOB, GPIO_PIN_15, GPIO_PIN_RESET);
                 delay_us(5);
 
                 hx711->bits++;
@@ -293,9 +299,13 @@ static uint32_t hx711_read(hx711_t *hx711, int32_t result[3]) {
             }
         } break;
         case HX711_STATE_END: {
-            HAL_GPIO_WritePin(GPIOC, GPIO_PIN_12, GPIO_PIN_SET);
+            HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, GPIO_PIN_SET);
+            HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_SET);
+            HAL_GPIO_WritePin(GPIOB, GPIO_PIN_15, GPIO_PIN_SET);
             delay_us(5);
-            HAL_GPIO_WritePin(GPIOC, GPIO_PIN_12, GPIO_PIN_RESET);
+            HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, GPIO_PIN_RESET);
+            HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_RESET);
+            HAL_GPIO_WritePin(GPIOB, GPIO_PIN_15, GPIO_PIN_RESET);
             delay_us(5);
 
             hx711->measurement[0] ^= 0x800000;
@@ -395,99 +405,6 @@ static void ina226_read(ina226_t *ina226, float *voltage, float *current) {
 void HAL_I2C_MemRxCpltCallback(I2C_HandleTypeDef *hi2c) {
     if(hi2c == &hi2c3) {
         i2c_ready = 1;
-    }
-}
-
-#define DS18B20_SKIP_ROM        0xCC
-#define DS18B20_CONVERT_T       0x44
-#define DS18B20_READ_SCRATCHPAD 0xBE
-
-typedef enum {
-    DS18B20_STATE_IDLE,
-    DS18B20_STATE_WAIT,
-    DS18B20_STATE_END,
-} ds18b20_state_t;
-
-typedef struct {
-    ds18b20_state_t state;
-    uint32_t begin;
-} ds18b20_t;
-
-static void ds18b20_reset() {
-    HAL_GPIO_WritePin(GPIOC, GPIO_PIN_10, GPIO_PIN_RESET);
-    delay_us(480);
-    HAL_GPIO_WritePin(GPIOC, GPIO_PIN_10, GPIO_PIN_SET);
-    delay_us(480);
-}
-
-static void ds18b20_write_byte(uint8_t byte) {
-    for(uint8_t i = 0; i < 8; i++) {
-        if((byte >> i) & 0x01) {
-            HAL_GPIO_WritePin(GPIOC, GPIO_PIN_10, GPIO_PIN_RESET);
-            delay_us(6);
-            HAL_GPIO_WritePin(GPIOC, GPIO_PIN_10, GPIO_PIN_SET);
-            delay_us(64);
-        } else {
-            HAL_GPIO_WritePin(GPIOC, GPIO_PIN_10, GPIO_PIN_RESET);
-            delay_us(60);
-            HAL_GPIO_WritePin(GPIOC, GPIO_PIN_10, GPIO_PIN_SET);
-            delay_us(10);
-        }
-    }
-}
-
-static uint8_t ds18b20_read_byte() {
-    uint8_t byte = 0;
-    for(uint8_t i = 0; i < 8; i++) {
-        HAL_GPIO_WritePin(GPIOC, GPIO_PIN_10, GPIO_PIN_RESET);
-        delay_us(3);
-        HAL_GPIO_WritePin(GPIOC, GPIO_PIN_10, GPIO_PIN_SET);
-        delay_us(10);
-        if(HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_10) == GPIO_PIN_SET) {
-            byte |= (1U << i);
-        }
-        delay_us(53);
-    }
-    return byte;
-}
-
-static void ds18b20_init(ds18b20_t *ds18b20) {
-    ds18b20->state = DS18B20_STATE_IDLE;
-
-    HAL_GPIO_WritePin(GPIOC, GPIO_PIN_10, GPIO_PIN_SET);
-}
-
-static void ds18b20_read(ds18b20_t *ds18b20, float *temperature) {
-    switch(ds18b20->state) {
-        case DS18B20_STATE_IDLE: {
-            ds18b20_reset();
-            ds18b20_write_byte(DS18B20_SKIP_ROM);
-            ds18b20_write_byte(DS18B20_CONVERT_T);
-
-            ds18b20->state = DS18B20_STATE_WAIT;
-            ds18b20->begin = HAL_GetTick();
-        } break;
-        case DS18B20_STATE_WAIT: {
-            if((HAL_GetTick() - ds18b20->begin) >= 750) {
-                ds18b20->state = DS18B20_STATE_END;
-            }
-        } break;
-        case DS18B20_STATE_END: {
-            ds18b20_reset();
-            ds18b20_write_byte(DS18B20_SKIP_ROM);
-            ds18b20_write_byte(DS18B20_READ_SCRATCHPAD);
-
-            uint8_t buffer[9];
-            for(uint8_t i = 0; i < 9; i++) {
-                buffer[i] = ds18b20_read_byte();
-            }
-
-            const int16_t raw = (((uint16_t)buffer[1]) << 8) | buffer[0];
-
-            *temperature = raw * 0.0625f;
-
-            ds18b20->state = DS18B20_STATE_IDLE;
-        } break;
     }
 }
 
@@ -613,7 +530,6 @@ int main() {
 
     hx711_t hx711;
     ina226_t ina226;
-    ds18b20_t ds18b20;
 
     HAL_TIM_Base_Start(&htim1);
 
@@ -621,7 +537,6 @@ int main() {
     tacho_init(&tacho);
     hx711_init(&hx711);
     ina226_init(&ina226);
-    ds18b20_init(&ds18b20);
 
     struct mg_mgr mgr;
     mg_mgr_init(&mgr);
@@ -644,7 +559,6 @@ int main() {
     float thrust = 0;
     float torque = 0;
     float velocity = 0;
-    float temperature = 0;
     float voltage = 0;
     float current = 0;
     int32_t load[3] = {0};
@@ -676,10 +590,10 @@ int main() {
 \"vel_raw\":%f,\
 \"curr\":%f,\
 \"volt\":%f,\
-\"temp\":%f\
+\"temp\":20\
 }",
-                             thrust, load[0], torque, load[1], load[2], velocity, frequency,
-                             current, voltage, temperature);
+                             thrust, load[2], torque, load[0], load[1], velocity, frequency,
+                             current, voltage);
 
                     mg_ws_send(context.ws_conns[i], json, strlen(json), WEBSOCKET_OP_BINARY);
                 }
@@ -707,25 +621,24 @@ int main() {
             const float arm = 0.270f;
             const float k = 0.265f / -105000.f;
 
-            const float mass = 0.212f;
+            const float mass = 0.226f;
             const float t1 = -mass * arm * g;
-            const float l11 = 1368339.f;
-            const float l21 = 1900411.f;
+            const float l11 = 1981956.f;
+            const float l21 = 1409267.f;
             const float t2 = +mass * arm * g;
-            const float l12 = -1795504.f;
-            const float l22 = -1414293.f;
+            const float l12 = -1503401.f;
+            const float l22 = -1901835.f;
 
             const float k1 = ((t1 * l22) - (t2 * l21)) / ((l11 * l22) - (l12 * l21));
             const float k2 = (-(t1 * l12) + (t2 * l11)) / ((l11 * l22) - (l12 * l21));
 
-            thrust = load[0] * k * g;
-            torque = (k1 * load[1]) + (k2 * load[2]);
+            thrust = load[2] * k * g;
+            torque = (k1 * load[0]) + (k2 * load[1]);
         }
 
         if((timestamp - prev2) >= 50) {
             prev2 = timestamp;
             ina226_read(&ina226, &voltage, &current);
-            ds18b20_read(&ds18b20, &temperature);
             tacho_read(&tacho, &frequency);
 
             velocity = 6.283185307f * frequency;
