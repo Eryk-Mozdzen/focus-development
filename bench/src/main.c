@@ -7,6 +7,8 @@
 
 #include "ina226_regs.h"
 
+#define WS_CONN_MAX 16
+
 typedef struct {
     uint8_t buffer[1024];
     volatile uint32_t rd;
@@ -30,6 +32,8 @@ typedef struct {
     fifo_t fifo_rx;
     state_t state;
     button_t button;
+
+    struct mg_connection *ws_conns[WS_CONN_MAX];
 } context_t;
 
 extern TIM_HandleTypeDef htim1;
@@ -89,36 +93,10 @@ static uint32_t fifo_read(fifo_t *fifo, uint8_t *dst, const uint32_t dst_capacit
     return num;
 }
 
-/*static void ppp_link_status_cb(ppp_pcb *pcb, int err_code, void *ctx) {
-    (void)pcb;
-
-    context_t *context = ctx;
-
-    if(err_code == PPPERR_NONE) {
-        if(context->state == STATE_CONNECTING) {
-            context->state = STATE_CONNECTED;
-        }
-    }
-}*/
-
 static size_t ppp_output(const void *data, size_t len, void *arg) {
     context_t *context = arg;
     return fifo_write(&context->fifo_tx, data, len);
 }
-
-/*static void ws_on_message_cb(void *arg,
-                             struct websocket_client *client,
-                             const void *message,
-                             u32_t message_len) {
-    (void)client;
-    (void)message_len;
-
-    context_t *context = arg;
-
-    if(strcmp(message, "offset") == 0) {
-        context->button = BUTTON_OFFSET;
-    }
-}*/
 
 static void delay_us(const uint32_t time_us) {
     __HAL_TIM_SET_COUNTER(&htim1, 0);
@@ -507,11 +485,19 @@ static inline void tx_store(struct mg_connection *c, const struct tx *t) {
 }
 
 static void fn(struct mg_connection *c, int ev, void *ev_data) {
+    context_t *context = c->fn_data;
+
     if(ev == MG_EV_HTTP_MSG) {
         struct mg_http_message *hm = (struct mg_http_message *)ev_data;
 
         if(mg_match(hm->uri, mg_str("/websocket"), NULL)) {
             mg_ws_upgrade(c, hm, NULL);
+            for(uint32_t i = 0; i < WS_CONN_MAX; i++) {
+                if(context->ws_conns[i] == NULL) {
+                    context->ws_conns[i] = c;
+                    break;
+                }
+            }
             return;
         }
 
@@ -564,15 +550,15 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
     } else if(ev == MG_EV_WS_MSG) {
         // struct mg_ws_message *wm = (struct mg_ws_message *)ev_data;
 
-        static int xd = 0;
-        xd++;
-
-        frame_t frame = {
-            .current = xd,
-            .frequency = 4.20f,
-        };
-
-        mg_ws_send(c, &frame, sizeof(frame), WEBSOCKET_OP_BINARY);
+        // if(mg_strcmp(wm->data, mg_str("offset")) == 0) {
+        context->button = BUTTON_OFFSET;
+        //}
+    } else if(ev == MG_EV_CLOSE) {
+        for(uint32_t i = 0; i < WS_CONN_MAX; i++) {
+            if(context->ws_conns[i] == c) {
+                context->ws_conns[i] = NULL;
+            }
+        }
     }
 }
 
@@ -598,7 +584,7 @@ int main() {
     netif.enable_dhcp_client = false;
     mg_tcpip_init(&mgr, &netif);
 
-    mg_http_listen(&mgr, "http://0.0.0.0:80", fn, NULL);
+    mg_http_listen(&mgr, "http://0.0.0.0:80", fn, &context);
 
     context.state = STATE_DISCONNECTED;
     fifo_init(&context.fifo_tx);
@@ -618,7 +604,7 @@ int main() {
     ds18b20_t ds18b20;
     ds18b20_init(&ds18b20);
 
-    // uint32_t prev1 = 0;
+    uint32_t prev1 = 0;
     uint32_t prev2 = 0;
     uint8_t send_buffer[1024];
     uint8_t recv_buffer[1024];
@@ -634,36 +620,15 @@ int main() {
         HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5,
                           ((timestamp % 1000) < 50) ? GPIO_PIN_SET : GPIO_PIN_RESET);
 
-        /*switch(context.state) {
-            case STATE_DISCONNECTED: {
-                context.state = STATE_CONNECTING;
-                ppp_connect(ppp, 0);
-            } break;
-            case STATE_CONNECTING: {
+        if((timestamp - prev1) >= 100) {
+            prev1 = timestamp;
 
-            } break;
-            case STATE_CONNECTED: {
-                lwiperf_start_tcp_server_default(NULL, NULL);
-
-                httpd_init();
-
-                ws_server = websocket_server_new(81);
-                websocket_arg(ws_server, &context);
-                websocket_on_message(ws_server, ws_on_message_cb);
-
-                context.state = STATE_LOOP;
-            } break;
-            case STATE_LOOP: {
-                if((timestamp - prev1) >= 100) {
-                    prev1 = timestamp;
-
-                    for(struct websocket_client *client = ws_server->clients; client != NULL;
-                        client = client->next) {
-                        websocket_send(client, &frame, sizeof(frame));
-                    }
+            for(uint32_t i = 0; i < WS_CONN_MAX; i++) {
+                if(context.ws_conns[i] != NULL) {
+                    mg_ws_send(context.ws_conns[i], &frame, sizeof(frame), WEBSOCKET_OP_BINARY);
                 }
-            } break;
-        }*/
+            }
+        }
 
         switch(context.button) {
             case BUTTON_NONE: {
