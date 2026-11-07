@@ -2,30 +2,26 @@
 
 #include <stm32u0xx_hal.h>
 
-#include <lwip/apps/fs.h>
-#include <lwip/apps/httpd.h>
-#include <lwip/apps/lwiperf.h>
-#include <lwip/init.h>
-#include <lwip/sys.h>
-#include <lwip/timeouts.h>
-#include <netif/ppp/ppp.h>
-#include <netif/ppp/pppos.h>
+#include <mg_pppos.h>
+#include <mongoose.h>
 
+#include "fifo.h"
 #include "ina226_regs.h"
-#include "websocket.h"
+#include "tmr.h"
+
+#define WS_CONN_MAX 16
 
 typedef struct {
-    uint8_t buffer[1024];
-    volatile uint32_t rd;
-    volatile uint32_t wr;
-} fifo_t;
-
-typedef enum {
-    STATE_DISCONNECTED,
-    STATE_CONNECTING,
-    STATE_CONNECTED,
-    STATE_LOOP,
-} state_t;
+    UART_HandleTypeDef *huart;
+    fifo_t fifo_tx;
+    fifo_t fifo_rx;
+    tmr_t timeout_tx;
+    tmr_t timeout_rx;
+    uint8_t dma_tx_buffer[1024];
+    uint8_t dma_rx_buffer[1024];
+    volatile uint8_t dma_tx_ready;
+    volatile uint32_t dma_rx_pos;
+} uart_t;
 
 typedef enum {
     BUTTON_NONE,
@@ -33,10 +29,8 @@ typedef enum {
 } button_t;
 
 typedef struct {
-    fifo_t fifo_tx;
-    fifo_t fifo_rx;
-    state_t state;
     button_t button;
+    struct mg_connection *ws_conns[WS_CONN_MAX];
 } context_t;
 
 extern TIM_HandleTypeDef htim1;
@@ -50,83 +44,119 @@ extern const char _binary_style_css_end[];
 extern const char _binary_script_js_start[];
 extern const char _binary_script_js_end[];
 
-static volatile uint8_t send_ready = 1;
-static volatile uint8_t recv_byte;
+static uart_t uart;
 static context_t context;
 
 void SystemClock_Config();
 void MX_GPIO_Init();
+void MX_DMA_Init();
 void MX_TIM1_Init();
 void MX_TIM2_Init();
 void MX_I2C3_Init();
 void MX_USART2_UART_Init();
 
-static void fifo_init(fifo_t *fifo) {
-    fifo->rd = 0;
-    fifo->wr = 0;
-}
+static void uart_send(uart_t *uart) {
+    const uint32_t primask = __get_PRIMASK();
+    __disable_irq();
 
-static uint32_t fifo_write(fifo_t *fifo, const uint8_t *src, uint32_t src_len) {
-    uint32_t num = 0;
-    while(num < src_len) {
-        uint32_t next = fifo->wr + 1;
-        if(next >= sizeof(fifo->buffer)) {
-            next = 0;
-        }
-        if(next == fifo->rd) {
-            break;
-        }
-        fifo->buffer[fifo->wr] = src[num];
-        fifo->wr = next;
-        num++;
-    }
-    return num;
-}
-
-static uint32_t fifo_read(fifo_t *fifo, uint8_t *dst, const uint32_t dst_capacity) {
-    uint32_t num = 0;
-    while((fifo->rd != fifo->wr) && (num < dst_capacity)) {
-        dst[num] = fifo->buffer[fifo->rd];
-        fifo->rd++;
-        num++;
-        if(fifo->rd >= sizeof(fifo->buffer)) {
-            fifo->rd = 0;
+    if(uart->dma_tx_ready) {
+        const uint32_t len =
+            fifo_read(&uart->fifo_tx, uart->dma_tx_buffer, sizeof(uart->dma_tx_buffer));
+        if(len > 0) {
+            uart->dma_tx_ready = 0;
+            HAL_UART_Transmit_DMA(uart->huart, uart->dma_tx_buffer, len);
         }
     }
-    return num;
+
+    __set_PRIMASK(primask);
 }
 
-static void ppp_link_status_cb(ppp_pcb *pcb, int err_code, void *ctx) {
-    (void)pcb;
+static void uart_recv(uart_t *uart) {
+    const uint32_t primask = __get_PRIMASK();
+    __disable_irq();
 
-    context_t *context = ctx;
+    const uint32_t pos = sizeof(uart->dma_rx_buffer) - __HAL_DMA_GET_COUNTER(uart->huart->hdmarx);
 
-    if(err_code == PPPERR_NONE) {
-        if(context->state == STATE_CONNECTING) {
-            context->state = STATE_CONNECTED;
+    if(pos != uart->dma_rx_pos) {
+        if(pos > uart->dma_rx_pos) {
+            fifo_write(&uart->fifo_rx, &uart->dma_rx_buffer[uart->dma_rx_pos],
+                       pos - uart->dma_rx_pos);
+        } else {
+            fifo_write(&uart->fifo_rx, &uart->dma_rx_buffer[uart->dma_rx_pos],
+                       sizeof(uart->dma_rx_buffer) - uart->dma_rx_pos);
+            if(pos > 0) {
+                fifo_write(&uart->fifo_rx, uart->dma_rx_buffer, pos);
+            }
         }
+        uart->dma_rx_pos = pos;
+    }
+
+    __set_PRIMASK(primask);
+}
+
+static size_t uart_output(const void *data, size_t data_size, void *arg) {
+    uart_t *uart = arg;
+
+    const uint8_t *buffer = data;
+    uint32_t n;
+    uint32_t total = 0;
+    while(total < data_size) {
+        n = fifo_write(&uart->fifo_tx, &buffer[total], data_size - total);
+        if(n < (data_size - total)) {
+            tmr_restart(&uart->timeout_tx);
+            uart_send(uart);
+        }
+        total += n;
+    }
+    return data_size;
+}
+
+static void uart_init(uart_t *uart, UART_HandleTypeDef *huart) {
+    uart->huart = huart;
+    uart->dma_tx_ready = 1;
+    uart->dma_rx_pos = 0;
+    fifo_init(&uart->fifo_tx);
+    fifo_init(&uart->fifo_rx);
+    tmr_init(&uart->timeout_tx, 1);
+    tmr_init(&uart->timeout_rx, 1);
+    HAL_UART_Receive_DMA(uart->huart, uart->dma_rx_buffer, sizeof(uart->dma_rx_buffer));
+}
+
+static void uart_loop(uart_t *uart, struct mg_pppos *pppos) {
+    if(tmr_timeout(&uart->timeout_tx)) {
+        tmr_reset(&uart->timeout_tx);
+        uart_send(uart);
+    }
+
+    if(tmr_timeout(&uart->timeout_rx)) {
+        tmr_reset(&uart->timeout_rx);
+        uart_recv(uart);
+    }
+
+    uint8_t buffer_rx[128];
+    const uint32_t buffer_len = fifo_read(&uart->fifo_rx, buffer_rx, sizeof(buffer_rx));
+    if(buffer_len > 0) {
+        mg_pppos_input(pppos, buffer_rx, buffer_len);
     }
 }
 
-static uint32_t ppp_output_cb(ppp_pcb *pcb, const void *data, uint32_t data_size, void *ctx) {
-    (void)pcb;
-
-    context_t *context = ctx;
-
-    return fifo_write(&context->fifo_tx, data, data_size);
+void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart) {
+    if(huart == uart.huart) {
+        uart.dma_tx_ready = 1;
+    }
 }
 
-static void ws_on_message_cb(void *arg,
-                             struct websocket_client *client,
-                             const void *message,
-                             u32_t message_len) {
-    (void)client;
-    (void)message_len;
+void HAL_UART_RxHalfCpltCallback(UART_HandleTypeDef *huart) {
+    if(huart == uart.huart) {
+        tmr_restart(&uart.timeout_rx);
+        uart_recv(&uart);
+    }
+}
 
-    context_t *context = arg;
-
-    if(strcmp(message, "offset") == 0) {
-        context->button = BUTTON_OFFSET;
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
+    if(huart == uart.huart) {
+        tmr_restart(&uart.timeout_rx);
+        uart_recv(&uart);
     }
 }
 
@@ -193,6 +223,14 @@ static void tacho_isr(tacho_t *tacho) {
     tacho->buffer_counter++;
     if(tacho->buffer_counter >= TACHO_BUFFER) {
         tacho->buffer_counter = 0;
+    }
+}
+
+tacho_t tacho;
+
+void HAL_GPIO_EXTI_Rising_Callback(uint16_t GPIO_Pin) {
+    if(GPIO_Pin == GPIO_PIN_0) {
+        tacho_isr(&tacho);
     }
 }
 
@@ -353,6 +391,12 @@ static void ina226_read(ina226_t *ina226, float *voltage, float *current) {
     }
 }
 
+void HAL_I2C_MemRxCpltCallback(I2C_HandleTypeDef *hi2c) {
+    if(hi2c == &hi2c3) {
+        i2c_ready = 1;
+    }
+}
+
 #define DS18B20_SKIP_ROM        0xCC
 #define DS18B20_CONVERT_T       0x44
 #define DS18B20_READ_SCRATCHPAD 0xBE
@@ -446,95 +490,6 @@ static void ds18b20_read(ds18b20_t *ds18b20, float *temperature) {
     }
 }
 
-sys_prot_t sys_arch_protect() {
-    return 0;
-}
-
-void sys_arch_unprotect(sys_prot_t pval) {
-    (void)pval;
-}
-
-uint32_t sys_now() {
-    return HAL_GetTick();
-}
-
-uint32_t sys_jiffies() {
-    return HAL_GetTick();
-}
-
-int fs_open_custom(struct fs_file *file, const char *name) {
-    if((strcmp(name, "") == 0) || (strcmp(name, "/") == 0)) {
-        name = "index.html";
-    }
-
-    if(strcmp(name, "/index.html") == 0) {
-        file->data = _binary_index_html_start;
-        file->len = _binary_index_html_end - _binary_index_html_start;
-        file->index = 0;
-        file->flags = 0;
-        return 1;
-    }
-
-    if(strcmp(name, "/style.css") == 0) {
-        file->data = _binary_style_css_start;
-        file->len = _binary_style_css_end - _binary_style_css_start;
-        file->index = 0;
-        file->flags = 0;
-        return 1;
-    }
-
-    if(strcmp(name, "/script.js") == 0) {
-        file->data = _binary_script_js_start;
-        file->len = _binary_script_js_end - _binary_script_js_start;
-        file->index = 0;
-        file->flags = 0;
-        return 1;
-    }
-
-    return 0;
-}
-
-void fs_close_custom(struct fs_file *file) {
-    (void)file;
-}
-
-int fs_read_custom(struct fs_file *file, char *buffer, int count) {
-    int read = file->len - file->index;
-    if(read > count) {
-        read = count;
-    }
-    memcpy(buffer, (file->data + file->index), read);
-    file->index += read;
-    return read;
-}
-
-tacho_t tacho;
-
-void HAL_GPIO_EXTI_Rising_Callback(uint16_t GPIO_Pin) {
-    if(GPIO_Pin == GPIO_PIN_0) {
-        tacho_isr(&tacho);
-    }
-}
-
-void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart) {
-    if(huart == &huart2) {
-        send_ready = 1;
-    }
-}
-
-void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
-    if(huart == &huart2) {
-        fifo_write(&context.fifo_rx, (uint8_t *)&recv_byte, 1);
-        HAL_UART_Receive_IT(&huart2, (uint8_t *)&recv_byte, 1);
-    }
-}
-
-void HAL_I2C_MemRxCpltCallback(I2C_HandleTypeDef *hi2c) {
-    if(hi2c == &hi2c3) {
-        i2c_ready = 1;
-    }
-}
-
 typedef struct {
     float thrust;
     float torque;
@@ -546,45 +501,155 @@ typedef struct {
     float frequency;
 } frame_t;
 
+uint64_t mg_millis(void) {
+    return HAL_GetTick();
+}
+
+#define CHUNK 512
+
+struct asset {
+    const char *uri;
+    const char *mime;
+    const char *start;
+    const char *end;
+};
+
+struct tx {
+    const char *p;
+    size_t left;
+};
+
+static const struct asset assets[] = {
+    {"/index.html", "text/html",              _binary_index_html_start, _binary_index_html_end},
+    {"/style.css",  "text/css",               _binary_style_css_start,  _binary_style_css_end },
+    {"/script.js",  "application/javascript", _binary_script_js_start,  _binary_script_js_end },
+};
+
+static inline void tx_load(struct mg_connection *c, struct tx *t) {
+    memcpy(t, c->data, sizeof(*t));
+}
+
+static inline void tx_store(struct mg_connection *c, const struct tx *t) {
+    memcpy(c->data, t, sizeof(*t));
+}
+
+static void http_event(struct mg_connection *c, int ev, void *ev_data) {
+    context_t *context = c->fn_data;
+
+    if(ev == MG_EV_HTTP_MSG) {
+        struct mg_http_message *hm = (struct mg_http_message *)ev_data;
+
+        if(mg_match(hm->uri, mg_str("/websocket"), NULL)) {
+            mg_ws_upgrade(c, hm, NULL);
+            for(uint32_t i = 0; i < WS_CONN_MAX; i++) {
+                if(context->ws_conns[i] == NULL) {
+                    context->ws_conns[i] = c;
+                    break;
+                }
+            }
+            return;
+        }
+
+        if(mg_strcmp(hm->uri, mg_str("/")) == 0) {
+            hm->uri = mg_str("/index.html");
+        }
+
+        for(size_t i = 0; i < sizeof(assets) / sizeof(assets[0]); i++) {
+            if(mg_strcmp(hm->uri, mg_str(assets[i].uri)) != 0) {
+                continue;
+            }
+
+            size_t len = (size_t)(assets[i].end - assets[i].start);
+
+            mg_printf(c,
+                      "HTTP/1.1 200 OK\r\n"
+                      "Content-Type: %s\r\n"
+                      "Content-Length: %lu\r\n"
+                      "Connection: close\r\n"
+                      "\r\n",
+                      assets[i].mime, (unsigned long)len);
+
+            struct tx t = {assets[i].start, len};
+            tx_store(c, &t);
+            return;
+        }
+        mg_http_reply(c, 404, "Connection: close\r\n", "Not found\n");
+
+    } else if(ev == MG_EV_POLL || ev == MG_EV_WRITE) {
+        if(c->is_listening || c->is_draining || c->is_closing) {
+            return;
+        }
+
+        struct tx t;
+        tx_load(c, &t);
+        if(t.left == 0) {
+            return;
+        }
+
+        if(c->send.len < CHUNK) {
+            size_t n = t.left < CHUNK ? t.left : CHUNK;
+            mg_send(c, t.p, n);
+            t.p += n;
+            t.left -= n;
+            tx_store(c, &t);
+            if(t.left == 0) {
+                c->is_draining = 1;
+            }
+        }
+    } else if(ev == MG_EV_WS_MSG) {
+        struct mg_ws_message *wm = (struct mg_ws_message *)ev_data;
+
+        if(mg_strcmp(wm->data, mg_str("offset")) == 0) {
+            context->button = BUTTON_OFFSET;
+        }
+    } else if(ev == MG_EV_CLOSE) {
+        for(uint32_t i = 0; i < WS_CONN_MAX; i++) {
+            if(context->ws_conns[i] == c) {
+                context->ws_conns[i] = NULL;
+            }
+        }
+    }
+}
+
 int main() {
     HAL_Init();
     SystemClock_Config();
     MX_GPIO_Init();
+    MX_DMA_Init();
     MX_TIM1_Init();
     MX_TIM2_Init();
     MX_I2C3_Init();
     MX_USART2_UART_Init();
 
-    lwip_init();
-
-    struct netif netif = {0};
-    ppp_pcb *ppp = pppos_create(&netif, ppp_output_cb, ppp_link_status_cb, &context);
-    ppp_set_default(ppp);
-
-    websocket_server_t *ws_server = NULL;
-
-    context.state = STATE_DISCONNECTED;
-    fifo_init(&context.fifo_tx);
-    fifo_init(&context.fifo_rx);
-    HAL_UART_Receive_IT(&huart2, (uint8_t *)&recv_byte, 1);
+    hx711_t hx711;
+    ina226_t ina226;
+    ds18b20_t ds18b20;
 
     HAL_TIM_Base_Start(&htim1);
 
+    uart_init(&uart, &huart2);
     tacho_init(&tacho);
-
-    hx711_t hx711;
     hx711_init(&hx711);
-
-    ina226_t ina226;
     ina226_init(&ina226);
-
-    ds18b20_t ds18b20;
     ds18b20_init(&ds18b20);
+
+    struct mg_mgr mgr;
+    mg_mgr_init(&mgr);
+
+    struct mg_pppos pppos;
+    mg_pppos_init_state(&pppos, uart_output, NULL, NULL, &uart);
+
+    struct mg_tcpip_if netif = {0};
+    netif.driver = mg_pppos_driver(&pppos);
+    netif.driver_data = &pppos;
+    netif.l2type = MG_TCPIP_L2_PPP;
+    netif.enable_dhcp_client = false;
+    mg_tcpip_init(&mgr, &netif);
+
+    mg_http_listen(&mgr, "http://0.0.0.0:80", http_event, &context);
 
     uint32_t prev1 = 0;
     uint32_t prev2 = 0;
-    uint8_t send_buffer[1024];
-    uint8_t recv_buffer[1024];
 
     frame_t frame = {0};
 
@@ -597,35 +662,14 @@ int main() {
         HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5,
                           ((timestamp % 1000) < 50) ? GPIO_PIN_SET : GPIO_PIN_RESET);
 
-        switch(context.state) {
-            case STATE_DISCONNECTED: {
-                context.state = STATE_CONNECTING;
-                ppp_connect(ppp, 0);
-            } break;
-            case STATE_CONNECTING: {
+        if((timestamp - prev1) >= 100) {
+            prev1 = timestamp;
 
-            } break;
-            case STATE_CONNECTED: {
-                lwiperf_start_tcp_server_default(NULL, NULL);
-
-                httpd_init();
-
-                ws_server = websocket_server_new(81);
-                websocket_arg(ws_server, &context);
-                websocket_on_message(ws_server, ws_on_message_cb);
-
-                context.state = STATE_LOOP;
-            } break;
-            case STATE_LOOP: {
-                if((timestamp - prev1) >= 100) {
-                    prev1 = timestamp;
-
-                    for(struct websocket_client *client = ws_server->clients; client != NULL;
-                        client = client->next) {
-                        websocket_send(client, &frame, sizeof(frame));
-                    }
+            for(uint32_t i = 0; i < WS_CONN_MAX; i++) {
+                if(context.ws_conns[i] != NULL) {
+                    mg_ws_send(context.ws_conns[i], &frame, sizeof(frame), WEBSOCKET_OP_BINARY);
                 }
-            } break;
+            }
         }
 
         switch(context.button) {
@@ -674,20 +718,9 @@ int main() {
             ds18b20_read(&ds18b20, &frame.temperature);
         }
 
-        const uint32_t recv_len = fifo_read(&context.fifo_rx, recv_buffer, sizeof(recv_buffer));
-        if(recv_len > 0) {
-            pppos_input(ppp, recv_buffer, recv_len);
-        }
+        uart_loop(&uart, &pppos);
 
-        if(send_ready) {
-            const uint32_t send_len = fifo_read(&context.fifo_tx, send_buffer, sizeof(send_buffer));
-            if(send_len > 0) {
-                send_ready = 0;
-                HAL_UART_Transmit_IT(&huart2, send_buffer, send_len);
-            }
-        }
-
-        sys_check_timeouts();
+        mg_mgr_poll(&mgr, 1);
     }
 
     return 0;

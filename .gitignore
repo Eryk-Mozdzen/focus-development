@@ -24,3 +24,8 @@ fp-info-cache
 generate_math_lookup_sin
 
 *.csv
+
+.aws
+.agents
+.codex
+codex-*.md

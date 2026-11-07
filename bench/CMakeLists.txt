@@ -8,7 +8,8 @@ enable_language(ASM C)
 
 add_executable(${CMAKE_PROJECT_NAME}.elf
     "src/main.c"
-    "src/websocket.c"
+    "src/fifo.c"
+    "src/tmr.c"
 
     "cubemx/Core/Src/main.c"
     "cubemx/Core/Src/stm32u0xx_hal_msp.c"
@@ -18,127 +19,8 @@ add_executable(${CMAKE_PROJECT_NAME}.elf
     "cubemx/Core/Src/system_stm32u0xx.c"
     "cubemx/startup_stm32u083xx.s"
 
-    "lwip/src/api/api_lib.c"
-    "lwip/src/api/api_msg.c"
-    "lwip/src/api/err.c"
-    "lwip/src/api/if_api.c"
-    "lwip/src/api/netbuf.c"
-    "lwip/src/api/netdb.c"
-    "lwip/src/api/netifapi.c"
-    "lwip/src/api/sockets.c"
-    "lwip/src/api/tcpip.c"
-    "lwip/src/apps/altcp_tls/altcp_tls_mbedtls_mem.c"
-    "lwip/src/apps/http/altcp_proxyconnect.c"
-    "lwip/src/apps/http/fs.c"
-    "lwip/src/apps/http/http_client.c"
-    "lwip/src/apps/http/httpd.c"
-    "lwip/src/apps/lwiperf/lwiperf.c"
-    "lwip/src/apps/mdns/mdns_domain.c"
-    "lwip/src/apps/mdns/mdns_out.c"
-    "lwip/src/apps/mdns/mdns.c"
-    "lwip/src/apps/mqtt/mqtt.c"
-    "lwip/src/apps/netbiosns/netbiosns.c"
-    "lwip/src/apps/smtp/smtp.c"
-    "lwip/src/apps/snmp/snmp_asn1.c"
-    "lwip/src/apps/snmp/snmp_core.c"
-    "lwip/src/apps/snmp/snmp_mib2_icmp.c"
-    "lwip/src/apps/snmp/snmp_mib2_interfaces.c"
-    "lwip/src/apps/snmp/snmp_mib2_ip.c"
-    "lwip/src/apps/snmp/snmp_mib2_snmp.c"
-    "lwip/src/apps/snmp/snmp_mib2_system.c"
-    "lwip/src/apps/snmp/snmp_mib2_tcp.c"
-    "lwip/src/apps/snmp/snmp_mib2_udp.c"
-    "lwip/src/apps/snmp/snmp_mib2.c"
-    "lwip/src/apps/snmp/snmp_msg.c"
-    "lwip/src/apps/snmp/snmp_netconn.c"
-    "lwip/src/apps/snmp/snmp_pbuf_stream.c"
-    "lwip/src/apps/snmp/snmp_raw.c"
-    "lwip/src/apps/snmp/snmp_scalar.c"
-    "lwip/src/apps/snmp/snmp_snmpv2_framework.c"
-    "lwip/src/apps/snmp/snmp_snmpv2_usm.c"
-    "lwip/src/apps/snmp/snmp_table.c"
-    "lwip/src/apps/snmp/snmp_threadsync.c"
-    "lwip/src/apps/snmp/snmp_traps.c"
-    "lwip/src/apps/snmp/snmpv3_mbedtls.c"
-    "lwip/src/apps/snmp/snmpv3.c"
-    "lwip/src/apps/sntp/sntp.c"
-    "lwip/src/apps/tftp/tftp.c"
-    "lwip/src/core/ipv4/acd.c"
-    "lwip/src/core/ipv4/autoip.c"
-    "lwip/src/core/ipv4/dhcp.c"
-    "lwip/src/core/ipv4/etharp.c"
-    "lwip/src/core/ipv4/icmp.c"
-    "lwip/src/core/ipv4/igmp.c"
-    "lwip/src/core/ipv4/ip4_addr.c"
-    "lwip/src/core/ipv4/ip4_frag.c"
-    "lwip/src/core/ipv4/ip4.c"
-    "lwip/src/core/ipv6/dhcp6.c"
-    "lwip/src/core/ipv6/ethip6.c"
-    "lwip/src/core/ipv6/icmp6.c"
-    "lwip/src/core/ipv6/inet6.c"
-    "lwip/src/core/ipv6/ip6_addr.c"
-    "lwip/src/core/ipv6/ip6_frag.c"
-    "lwip/src/core/ipv6/ip6.c"
-    "lwip/src/core/ipv6/mld6.c"
-    "lwip/src/core/ipv6/nd6.c"
-    "lwip/src/core/altcp_alloc.c"
-    "lwip/src/core/altcp_tcp.c"
-    "lwip/src/core/altcp.c"
-    "lwip/src/core/def.c"
-    "lwip/src/core/dns.c"
-    "lwip/src/core/inet_chksum.c"
-    "lwip/src/core/init.c"
-    "lwip/src/core/ip.c"
-    "lwip/src/core/mem.c"
-    "lwip/src/core/memp.c"
-    "lwip/src/core/netif.c"
-    "lwip/src/core/pbuf.c"
-    "lwip/src/core/raw.c"
-    "lwip/src/core/stats.c"
-    "lwip/src/core/sys.c"
-    "lwip/src/core/tcp_in.c"
-    "lwip/src/core/tcp_out.c"
-    "lwip/src/core/tcp.c"
-    "lwip/src/core/timeouts.c"
-    "lwip/src/core/udp.c"
-    "lwip/src/netif/ppp/polarssl/arc4.c"
-    "lwip/src/netif/ppp/polarssl/des.c"
-    "lwip/src/netif/ppp/polarssl/md4.c"
-    "lwip/src/netif/ppp/polarssl/md5.c"
-    "lwip/src/netif/ppp/polarssl/sha1.c"
-    "lwip/src/netif/ppp/auth.c"
-    "lwip/src/netif/ppp/ccp.c"
-    "lwip/src/netif/ppp/chap_ms.c"
-    "lwip/src/netif/ppp/chap-md5.c"
-    "lwip/src/netif/ppp/chap-new.c"
-    "lwip/src/netif/ppp/demand.c"
-    "lwip/src/netif/ppp/eap.c"
-    "lwip/src/netif/ppp/ecp.c"
-    "lwip/src/netif/ppp/eui64.c"
-    "lwip/src/netif/ppp/fsm.c"
-    "lwip/src/netif/ppp/ipcp.c"
-    "lwip/src/netif/ppp/ipv6cp.c"
-    "lwip/src/netif/ppp/lcp.c"
-    "lwip/src/netif/ppp/magic.c"
-    "lwip/src/netif/ppp/mppe.c"
-    "lwip/src/netif/ppp/multilink.c"
-    "lwip/src/netif/ppp/ppp.c"
-    "lwip/src/netif/ppp/pppapi.c"
-    "lwip/src/netif/ppp/pppcrypt.c"
-    "lwip/src/netif/ppp/pppoe.c"
-    "lwip/src/netif/ppp/pppol2tp.c"
-    "lwip/src/netif/ppp/pppos.c"
-    "lwip/src/netif/ppp/upap.c"
-    "lwip/src/netif/ppp/utils.c"
-    "lwip/src/netif/ppp/vj.c"
-    "lwip/src/netif/bridgeif_fdb.c"
-    "lwip/src/netif/bridgeif.c"
-    "lwip/src/netif/ethernet.c"
-    "lwip/src/netif/lowpan6_ble.c"
-    "lwip/src/netif/lowpan6_common.c"
-    "lwip/src/netif/lowpan6.c"
-    "lwip/src/netif/slipif.c"
-    "lwip/src/netif/zepif.c"
+    "mongoose/mongoose.c"
+    "mongoose-pppos/mg_pppos.c"
 
     "cubemx/Drivers/STM32U0xx_HAL_Driver/Src/stm32u0xx_hal_adc.c"
     "cubemx/Drivers/STM32U0xx_HAL_Driver/Src/stm32u0xx_hal_adc_ex.c"
@@ -187,32 +69,12 @@ add_executable(${CMAKE_PROJECT_NAME}.elf
     "cubemx/Drivers/STM32U0xx_HAL_Driver/Src/stm32u0xx_hal_usart.c"
     "cubemx/Drivers/STM32U0xx_HAL_Driver/Src/stm32u0xx_hal_usart_ex.c"
     "cubemx/Drivers/STM32U0xx_HAL_Driver/Src/stm32u0xx_hal_wwdg.c"
-    "cubemx/Drivers/STM32U0xx_HAL_Driver/Src/stm32u0xx_ll_adc.c"
-    "cubemx/Drivers/STM32U0xx_HAL_Driver/Src/stm32u0xx_ll_comp.c"
-    "cubemx/Drivers/STM32U0xx_HAL_Driver/Src/stm32u0xx_ll_crc.c"
-    "cubemx/Drivers/STM32U0xx_HAL_Driver/Src/stm32u0xx_ll_crs.c"
-    "cubemx/Drivers/STM32U0xx_HAL_Driver/Src/stm32u0xx_ll_dac.c"
-    "cubemx/Drivers/STM32U0xx_HAL_Driver/Src/stm32u0xx_ll_dma.c"
-    "cubemx/Drivers/STM32U0xx_HAL_Driver/Src/stm32u0xx_ll_exti.c"
-    "cubemx/Drivers/STM32U0xx_HAL_Driver/Src/stm32u0xx_ll_gpio.c"
-    "cubemx/Drivers/STM32U0xx_HAL_Driver/Src/stm32u0xx_ll_i2c.c"
-    "cubemx/Drivers/STM32U0xx_HAL_Driver/Src/stm32u0xx_ll_lptim.c"
-    "cubemx/Drivers/STM32U0xx_HAL_Driver/Src/stm32u0xx_ll_lpuart.c"
-    "cubemx/Drivers/STM32U0xx_HAL_Driver/Src/stm32u0xx_ll_opamp.c"
-    "cubemx/Drivers/STM32U0xx_HAL_Driver/Src/stm32u0xx_ll_pwr.c"
-    "cubemx/Drivers/STM32U0xx_HAL_Driver/Src/stm32u0xx_ll_rcc.c"
-    "cubemx/Drivers/STM32U0xx_HAL_Driver/Src/stm32u0xx_ll_rng.c"
-    "cubemx/Drivers/STM32U0xx_HAL_Driver/Src/stm32u0xx_ll_rtc.c"
-    "cubemx/Drivers/STM32U0xx_HAL_Driver/Src/stm32u0xx_ll_spi.c"
-    "cubemx/Drivers/STM32U0xx_HAL_Driver/Src/stm32u0xx_ll_tim.c"
-    "cubemx/Drivers/STM32U0xx_HAL_Driver/Src/stm32u0xx_ll_usart.c"
-    "cubemx/Drivers/STM32U0xx_HAL_Driver/Src/stm32u0xx_ll_usb.c"
-    "cubemx/Drivers/STM32U0xx_HAL_Driver/Src/stm32u0xx_ll_utils.c"
 )
 
 target_include_directories(${CMAKE_PROJECT_NAME}.elf PRIVATE
 	"src/include"
-    "lwip/src/include"
+    "mongoose"
+    "mongoose-pppos"
     "cubemx/Core/Inc"
     "cubemx/Drivers/STM32U0xx_HAL_Driver/Inc"
     "cubemx/Drivers/CMSIS/Include"
@@ -221,26 +83,21 @@ target_include_directories(${CMAKE_PROJECT_NAME}.elf PRIVATE
 
 target_compile_definitions(${CMAKE_PROJECT_NAME}.elf PRIVATE
     USE_HAL_DRIVER
-    USE_FULL_LL_DRIVER
     STM32U083xx
 )
 
 target_compile_options(${CMAKE_PROJECT_NAME}.elf PRIVATE
     $<$<COMPILE_LANGUAGE:ASM>:
-        -x assembler-with-cpp
-
         -mthumb
         -mcpu=cortex-m0
 	>
 
 	$<$<COMPILE_LANGUAGE:C>:
 		-O2 -g
-		-std=c23
+		-std=gnu23
 		-Wall
         -Wextra
         -Wpedantic
-
-        -Wno-unused-parameter
 
 		-ffunction-sections
 		-fdata-sections
@@ -252,18 +109,14 @@ target_compile_options(${CMAKE_PROJECT_NAME}.elf PRIVATE
 
 target_link_options(${CMAKE_PROJECT_NAME}.elf PRIVATE
 	-T ${CMAKE_SOURCE_DIR}/cubemx/STM32U083xx_FLASH.ld
-	-Wl,-Map=${CMAKE_PROJECT_NAME}.map
 	-Wl,--gc-sections
-	-Wl,-cref
-    -Wl,--start-group -lc -lm -Wl,--end-group
 
     -mthumb
 	-mcpu=cortex-m0
 )
 
 add_custom_command(TARGET ${CMAKE_PROJECT_NAME}.elf POST_BUILD
-    COMMAND ${CMAKE_OBJDUMP} -j .text -D ${CMAKE_PROJECT_NAME}.elf > ${CMAKE_PROJECT_NAME}.dump
-	COMMAND ${CMAKE_SIZE} ${CMAKE_PROJECT_NAME}.elf
+    COMMAND ${CMAKE_SIZE} ${CMAKE_PROJECT_NAME}.elf
 )
 
 include(embed.cmake)
