@@ -1,26 +1,21 @@
 # FOCUS development platform & thrust bench
 
-## Build
+## Bench
+
+### Build
 
 ```bash
-cd firmware
+cd bench
 mkdir build
 cd build
 
 cmake ..
 make
-
-../flash.sh
+make flash
 ```
 
-## PPP session
+### PPP session
 
 ```bash
 sudo pppd /dev/ttyACM0 921600 192.168.7.1:192.168.7.2 local noauth debug nodetach
-```
-
-## iPerf
-
-```bash
-iperf -c 192.168.7.2 -e -i 1 -M 5000 -l 8192
 ```
