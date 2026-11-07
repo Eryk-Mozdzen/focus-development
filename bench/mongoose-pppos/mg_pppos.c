@@ -18,6 +18,26 @@ static uint16_t ppp_fcs(uint16_t fcs, uint8_t byte) {
   return fcs;
 }
 
+static bool pppos_is_lcp_ack(const uint8_t *frame, size_t len,
+                             uint8_t expected_id) {
+  size_t off = len >= 2 && frame[0] == 0xff && frame[1] == 0x03 ? 2 : 0;
+  return len >= off + 8 && frame[off] == 0xc0 && frame[off + 1] == 0x21 &&
+         frame[off + 2] == 2 && frame[off + 3] == expected_id &&
+         frame[off + 4] == 0 && frame[off + 5] >= 4;
+}
+
+static bool pppos_is_lcp_config_req(const uint8_t *frame, size_t len) {
+  size_t off = len >= 2 && frame[0] == 0xff && frame[1] == 0x03 ? 2 : 0;
+  return len >= off + 6 && frame[off] == 0xc0 && frame[off + 1] == 0x21 &&
+         frame[off + 2] == 1;
+}
+
+static bool pppos_is_ipcp_ack(const uint8_t *frame, size_t len) {
+  size_t off = len >= 2 && frame[0] == 0xff && frame[1] == 0x03 ? 2 : 0;
+  return len >= off + 8 && frame[off] == 0x80 && frame[off + 1] == 0x21 &&
+         frame[off + 2] == 2 && frame[off + 4] == 0 && frame[off + 5] >= 4;
+}
+
 static bool pppos_init(struct mg_tcpip_if *ifp) {
   struct mg_pppos *s = (struct mg_pppos *) ifp->driver_data;
   return s != NULL && s->write != NULL && (s->init == NULL || s->init(s->arg));
@@ -29,6 +49,13 @@ static size_t pppos_tx(const void *data, size_t len, struct mg_tcpip_if *ifp) {
   uint8_t *out;
   size_t i, n = 0;
   if (s == NULL || s->write == NULL || len > MG_PPPOS_MAX_FRAME) return 0;
+  // Mongoose's minimal PPP handler mirrors a peer's empty LCP Configure-Request
+  // back to the peer. Once our restart request has been acknowledged, sending
+  // that duplicate request would reopen LCP on peers such as pppd.
+  if (s->restart_complete && s->restart_recovery &&
+      pppos_is_lcp_config_req(src, len))
+    return len;
+  if (pppos_is_ipcp_ack(src, len)) s->restart_recovery = false;
   out = s->tx;
   out[n++] = PPP_FLAG;
   for (i = 0; i < len; i++) {
@@ -42,6 +69,18 @@ static size_t pppos_tx(const void *data, size_t len, struct mg_tcpip_if *ifp) {
   }
   out[n++] = PPP_FLAG;
   return s->write(out, n, s->arg) == n ? len : 0;
+}
+
+static void pppos_restart(struct mg_pppos *s, struct mg_tcpip_if *ifp) {
+  uint8_t frame[] = {0xff, 0x03, 0xc0, 0x21, 0x01, 0, 0, 4, 0, 0};
+  uint16_t fcs = PPP_INITFCS;
+  size_t i;
+  frame[5] = (uint8_t) ++s->restart_id;
+  for (i = 0; i < 8; i++) fcs = ppp_fcs(fcs, frame[i]);
+  fcs ^= 0xffff;
+  frame[8] = (uint8_t) fcs;
+  frame[9] = (uint8_t) (fcs >> 8);
+  (void) pppos_tx(frame, sizeof(frame), ifp);
 }
 
 static size_t pppos_rx(void *buf, size_t len, struct mg_tcpip_if *ifp) {
@@ -61,7 +100,16 @@ static size_t pppos_rx(void *buf, size_t len, struct mg_tcpip_if *ifp) {
 
 static bool pppos_poll(struct mg_tcpip_if *ifp, bool expired_1000ms) {
   struct mg_pppos *s = (struct mg_pppos *) ifp->driver_data;
-  (void) expired_1000ms;
+  if (s != NULL && ifp->state >= MG_TCPIP_STATE_IP) s->restart_recovery = false;
+  if (s != NULL && expired_1000ms && s->restart_interval != 0 &&
+      !s->restart_complete && ifp->state < MG_TCPIP_STATE_IP) {
+    if (s->restart_timer == 0) {
+      pppos_restart(s, ifp);
+      s->restart_timer = (uint16_t) (s->restart_interval - 1);
+    } else {
+      s->restart_timer--;
+    }
+  }
   return s != NULL && (s->link == NULL || s->link(s->arg));
 }
 
@@ -74,6 +122,11 @@ static void pppos_finish_frame(struct mg_pppos *s) {
     for (i = 0; i < s->frame_len; i++) fcs = ppp_fcs(fcs, s->frame[i]);
     if (fcs == PPP_GOODFCS) {
       size_t slot;
+      if (pppos_is_lcp_ack(s->frame, s->frame_len,
+                           (uint8_t) s->restart_id))
+        s->restart_complete = true;
+      if (pppos_is_ipcp_ack(s->frame, s->frame_len))
+        s->restart_recovery = false;
       if (s->rx_count < MG_PPPOS_RX_SLOTS) {
         slot = s->rx_tail;
         memcpy(s->rx[slot], s->frame, s->frame_len);
@@ -129,6 +182,8 @@ void mg_pppos_init_state(struct mg_pppos *s, mg_pppos_write_fn write,
   s->init = init;
   s->link = link;
   s->arg = arg;
+  s->restart_interval = MG_PPPOS_RESTART_INTERVAL;
+  s->restart_recovery = true;
   s->driver.init = pppos_init;
   s->driver.tx = pppos_tx;
   s->driver.rx = pppos_rx;
@@ -137,6 +192,14 @@ void mg_pppos_init_state(struct mg_pppos *s, mg_pppos_write_fn write,
 
 struct mg_tcpip_driver *mg_pppos_driver(struct mg_pppos *s) {
   return s == NULL ? NULL : &s->driver;
+}
+
+void mg_pppos_set_restart_interval(struct mg_pppos *s, uint16_t seconds) {
+  if (s == NULL) return;
+  s->restart_interval = seconds;
+  s->restart_timer = 0;
+  s->restart_complete = false;
+  s->restart_recovery = true;
 }
 
 #endif  // MG_ENABLE_TCPIP

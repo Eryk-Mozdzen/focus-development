@@ -20,6 +20,8 @@ static struct mg_tcpip_if netif;
 // transmit the entire encoded frame and return its byte count. uart_init() may
 // be NULL.
 mg_pppos_init_state(&pppos, write_serial, uart_init, uart_link_is_up, uart);
+// Optional: retry stale-session recovery every 5 seconds (the default).
+mg_pppos_set_restart_interval(&pppos, 5);
 netif.driver = mg_pppos_driver(&pppos);
 netif.driver_data = &pppos;
 netif.l2type = MG_TCPIP_L2_PPP;
@@ -29,6 +31,17 @@ mg_tcpip_init(&mgr, &netif);
 // From the UART RX callback/task, pass every received byte chunk:
 mg_pppos_input(&pppos, bytes, count);
 ```
+
+While negotiation is pending, the driver sends an RFC 1661 LCP
+Configure-Request at the configured interval. A peer such as `pppd` that is
+still in its old Opened state treats this as a request to restart LCP
+negotiation. Retries stop when an LCP Configure-Ack is received or when the
+interface reaches `MG_TCPIP_STATE_IP`. After the peer
+acknowledges the restart request, the adapter filters duplicate LCP
+Configure-Requests emitted by Mongoose's simple PPP handler until IPCP is up.
+This avoids restarting LCP during initial recovery while allowing a later
+`pppd` restart to negotiate normally. Set the interval to `0` to disable these
+requests.
 
 Call `mg_pppos_input()` in a serialized context with Mongoose polling, or
 protect shared state with application synchronization. RX slots are bounded;

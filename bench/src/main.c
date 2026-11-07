@@ -117,8 +117,8 @@ static void uart_init(uart_t *uart, UART_HandleTypeDef *huart) {
     uart->dma_rx_pos = 0;
     fifo_init(&uart->fifo_tx);
     fifo_init(&uart->fifo_rx);
-    tmr_init(&uart->timeout_tx, 10);
-    tmr_init(&uart->timeout_rx, 10);
+    tmr_init(&uart->timeout_tx, 1);
+    tmr_init(&uart->timeout_rx, 1);
     HAL_UART_Receive_DMA(uart->huart, uart->dma_rx_buffer, sizeof(uart->dma_rx_buffer));
 }
 

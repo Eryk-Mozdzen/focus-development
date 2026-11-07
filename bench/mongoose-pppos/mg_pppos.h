@@ -15,6 +15,10 @@
 #define MG_PPPOS_RX_SLOTS 4
 #endif
 
+#ifndef MG_PPPOS_RESTART_INTERVAL
+#define MG_PPPOS_RESTART_INTERVAL 5
+#endif
+
 // The write callback must write the whole buffer or return fewer bytes. It is
 // called from Mongoose's TCP/IP driver transmit path and must not block.
 typedef size_t (*mg_pppos_write_fn)(const void *data, size_t len, void *arg);
@@ -32,13 +36,16 @@ struct mg_pppos {
   mg_pppos_init_fn init;
   mg_pppos_link_fn link;
   void *arg;
+  uint16_t restart_id;
+  uint16_t restart_timer;
+  uint16_t restart_interval;
   uint8_t rx[MG_PPPOS_RX_SLOTS][MG_PPPOS_MAX_FRAME];
   size_t rx_len[MG_PPPOS_RX_SLOTS];
   size_t rx_head, rx_tail, rx_count;
   uint8_t frame[MG_PPPOS_MAX_FRAME];
   uint8_t tx[2 * MG_PPPOS_MAX_FRAME + 2];
   size_t frame_len;
-  bool escaped, in_frame, overflow;
+  bool escaped, in_frame, overflow, restart_complete, restart_recovery;
   uint32_t rx_bad_fcs, rx_overflow, rx_dropped;
 };
 
@@ -50,6 +57,11 @@ void mg_pppos_init_state(struct mg_pppos *state, mg_pppos_write_fn write,
                         mg_pppos_init_fn init, mg_pppos_link_fn link,
                         void *arg);
 struct mg_tcpip_driver *mg_pppos_driver(struct mg_pppos *state);
+
+// Send an LCP Configure-Request periodically while PPP negotiation is pending,
+// prompting a peer with a stale session to renegotiate. Set to zero to disable.
+// Defaults to MG_PPPOS_RESTART_INTERVAL seconds.
+void mg_pppos_set_restart_interval(struct mg_pppos *state, uint16_t seconds);
 
 // Feed arbitrary chunks from the UART receive path. Chunks may end mid-frame.
 // The driver consumes queued complete frames on later TCP/IP polling passes.
