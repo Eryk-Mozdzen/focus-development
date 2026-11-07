@@ -484,7 +484,7 @@ static inline void tx_store(struct mg_connection *c, const struct tx *t) {
     memcpy(c->data, t, sizeof(*t));
 }
 
-static void fn(struct mg_connection *c, int ev, void *ev_data) {
+static void http_event(struct mg_connection *c, int ev, void *ev_data) {
     context_t *context = c->fn_data;
 
     if(ev == MG_EV_HTTP_MSG) {
@@ -584,7 +584,7 @@ int main() {
     netif.enable_dhcp_client = false;
     mg_tcpip_init(&mgr, &netif);
 
-    mg_http_listen(&mgr, "http://0.0.0.0:80", fn, &context);
+    mg_http_listen(&mgr, "http://0.0.0.0:80", http_event, &context);
 
     context.state = STATE_DISCONNECTED;
     fifo_init(&context.fifo_tx);
