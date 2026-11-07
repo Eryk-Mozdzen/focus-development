@@ -8,6 +8,8 @@ enable_language(ASM C)
 
 add_executable(${CMAKE_PROJECT_NAME}.elf
     "src/main.c"
+    "src/fifo.c"
+    "src/tmr.c"
 
     "cubemx/Core/Src/main.c"
     "cubemx/Core/Src/stm32u0xx_hal_msp.c"
@@ -67,27 +69,6 @@ add_executable(${CMAKE_PROJECT_NAME}.elf
     "cubemx/Drivers/STM32U0xx_HAL_Driver/Src/stm32u0xx_hal_usart.c"
     "cubemx/Drivers/STM32U0xx_HAL_Driver/Src/stm32u0xx_hal_usart_ex.c"
     "cubemx/Drivers/STM32U0xx_HAL_Driver/Src/stm32u0xx_hal_wwdg.c"
-    "cubemx/Drivers/STM32U0xx_HAL_Driver/Src/stm32u0xx_ll_adc.c"
-    "cubemx/Drivers/STM32U0xx_HAL_Driver/Src/stm32u0xx_ll_comp.c"
-    "cubemx/Drivers/STM32U0xx_HAL_Driver/Src/stm32u0xx_ll_crc.c"
-    "cubemx/Drivers/STM32U0xx_HAL_Driver/Src/stm32u0xx_ll_crs.c"
-    "cubemx/Drivers/STM32U0xx_HAL_Driver/Src/stm32u0xx_ll_dac.c"
-    "cubemx/Drivers/STM32U0xx_HAL_Driver/Src/stm32u0xx_ll_dma.c"
-    "cubemx/Drivers/STM32U0xx_HAL_Driver/Src/stm32u0xx_ll_exti.c"
-    "cubemx/Drivers/STM32U0xx_HAL_Driver/Src/stm32u0xx_ll_gpio.c"
-    "cubemx/Drivers/STM32U0xx_HAL_Driver/Src/stm32u0xx_ll_i2c.c"
-    "cubemx/Drivers/STM32U0xx_HAL_Driver/Src/stm32u0xx_ll_lptim.c"
-    "cubemx/Drivers/STM32U0xx_HAL_Driver/Src/stm32u0xx_ll_lpuart.c"
-    "cubemx/Drivers/STM32U0xx_HAL_Driver/Src/stm32u0xx_ll_opamp.c"
-    "cubemx/Drivers/STM32U0xx_HAL_Driver/Src/stm32u0xx_ll_pwr.c"
-    "cubemx/Drivers/STM32U0xx_HAL_Driver/Src/stm32u0xx_ll_rcc.c"
-    "cubemx/Drivers/STM32U0xx_HAL_Driver/Src/stm32u0xx_ll_rng.c"
-    "cubemx/Drivers/STM32U0xx_HAL_Driver/Src/stm32u0xx_ll_rtc.c"
-    "cubemx/Drivers/STM32U0xx_HAL_Driver/Src/stm32u0xx_ll_spi.c"
-    "cubemx/Drivers/STM32U0xx_HAL_Driver/Src/stm32u0xx_ll_tim.c"
-    "cubemx/Drivers/STM32U0xx_HAL_Driver/Src/stm32u0xx_ll_usart.c"
-    "cubemx/Drivers/STM32U0xx_HAL_Driver/Src/stm32u0xx_ll_usb.c"
-    "cubemx/Drivers/STM32U0xx_HAL_Driver/Src/stm32u0xx_ll_utils.c"
 )
 
 target_include_directories(${CMAKE_PROJECT_NAME}.elf PRIVATE
@@ -103,14 +84,11 @@ target_include_directories(${CMAKE_PROJECT_NAME}.elf PRIVATE
 
 target_compile_definitions(${CMAKE_PROJECT_NAME}.elf PRIVATE
     USE_HAL_DRIVER
-    USE_FULL_LL_DRIVER
     STM32U083xx
 )
 
 target_compile_options(${CMAKE_PROJECT_NAME}.elf PRIVATE
     $<$<COMPILE_LANGUAGE:ASM>:
-        -x assembler-with-cpp
-
         -mthumb
         -mcpu=cortex-m0
 	>
@@ -122,8 +100,6 @@ target_compile_options(${CMAKE_PROJECT_NAME}.elf PRIVATE
         -Wextra
         -Wpedantic
 
-        -Wno-unused-parameter
-
 		-ffunction-sections
 		-fdata-sections
 
@@ -134,10 +110,7 @@ target_compile_options(${CMAKE_PROJECT_NAME}.elf PRIVATE
 
 target_link_options(${CMAKE_PROJECT_NAME}.elf PRIVATE
 	-T ${CMAKE_SOURCE_DIR}/cubemx/STM32U083xx_FLASH.ld
-	-Wl,-Map=${CMAKE_PROJECT_NAME}.map
 	-Wl,--gc-sections
-	-Wl,-cref
-    -Wl,--start-group -lc -lm -Wl,--end-group
 
     -mthumb
 	-mcpu=cortex-m0
@@ -146,8 +119,7 @@ target_link_options(${CMAKE_PROJECT_NAME}.elf PRIVATE
 )
 
 add_custom_command(TARGET ${CMAKE_PROJECT_NAME}.elf POST_BUILD
-    COMMAND ${CMAKE_OBJDUMP} -j .text -D ${CMAKE_PROJECT_NAME}.elf > ${CMAKE_PROJECT_NAME}.dump
-	COMMAND ${CMAKE_SIZE} ${CMAKE_PROJECT_NAME}.elf
+    COMMAND ${CMAKE_SIZE} ${CMAKE_PROJECT_NAME}.elf
 )
 
 include(embed.cmake)

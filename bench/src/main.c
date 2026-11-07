@@ -5,22 +5,23 @@
 #include <mg_pppos.h>
 #include <mongoose.h>
 
+#include "fifo.h"
 #include "ina226_regs.h"
+#include "tmr.h"
 
 #define WS_CONN_MAX 16
 
 typedef struct {
-    uint8_t buffer[1024];
-    volatile uint32_t rd;
-    volatile uint32_t wr;
-} fifo_t;
-
-typedef enum {
-    STATE_DISCONNECTED,
-    STATE_CONNECTING,
-    STATE_CONNECTED,
-    STATE_LOOP,
-} state_t;
+    UART_HandleTypeDef *huart;
+    fifo_t fifo_tx;
+    fifo_t fifo_rx;
+    tmr_t timeout_tx;
+    tmr_t timeout_rx;
+    uint8_t dma_tx_buffer[1024];
+    uint8_t dma_rx_buffer[1024];
+    volatile uint8_t dma_tx_ready;
+    volatile uint32_t dma_rx_pos;
+} uart_t;
 
 typedef enum {
     BUTTON_NONE,
@@ -28,11 +29,7 @@ typedef enum {
 } button_t;
 
 typedef struct {
-    fifo_t fifo_tx;
-    fifo_t fifo_rx;
-    state_t state;
     button_t button;
-
     struct mg_connection *ws_conns[WS_CONN_MAX];
 } context_t;
 
@@ -47,55 +44,120 @@ extern const char _binary_style_css_end[];
 extern const char _binary_script_js_start[];
 extern const char _binary_script_js_end[];
 
-static volatile uint8_t send_ready = 1;
-static volatile uint8_t recv_byte;
+static uart_t uart;
 static context_t context;
 
 void SystemClock_Config();
 void MX_GPIO_Init();
+void MX_DMA_Init();
 void MX_TIM1_Init();
 void MX_TIM2_Init();
 void MX_I2C3_Init();
 void MX_USART2_UART_Init();
 
-static void fifo_init(fifo_t *fifo) {
-    fifo->rd = 0;
-    fifo->wr = 0;
-}
+static void uart_send(uart_t *uart) {
+    const uint32_t primask = __get_PRIMASK();
+    __disable_irq();
 
-static uint32_t fifo_write(fifo_t *fifo, const uint8_t *src, uint32_t src_len) {
-    uint32_t num = 0;
-    while(num < src_len) {
-        uint32_t next = fifo->wr + 1;
-        if(next >= sizeof(fifo->buffer)) {
-            next = 0;
-        }
-        if(next == fifo->rd) {
-            break;
-        }
-        fifo->buffer[fifo->wr] = src[num];
-        fifo->wr = next;
-        num++;
-    }
-    return num;
-}
-
-static uint32_t fifo_read(fifo_t *fifo, uint8_t *dst, const uint32_t dst_capacity) {
-    uint32_t num = 0;
-    while((fifo->rd != fifo->wr) && (num < dst_capacity)) {
-        dst[num] = fifo->buffer[fifo->rd];
-        fifo->rd++;
-        num++;
-        if(fifo->rd >= sizeof(fifo->buffer)) {
-            fifo->rd = 0;
+    if(uart->dma_tx_ready) {
+        const uint32_t len =
+            fifo_read(&uart->fifo_tx, uart->dma_tx_buffer, sizeof(uart->dma_tx_buffer));
+        if(len > 0) {
+            uart->dma_tx_ready = 0;
+            HAL_UART_Transmit_DMA(uart->huart, uart->dma_tx_buffer, len);
         }
     }
-    return num;
+
+    __set_PRIMASK(primask);
 }
 
-static size_t ppp_output(const void *data, size_t len, void *arg) {
-    context_t *context = arg;
-    return fifo_write(&context->fifo_tx, data, len);
+static void uart_recv(uart_t *uart) {
+    const uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+
+    const uint32_t pos = sizeof(uart->dma_rx_buffer) - __HAL_DMA_GET_COUNTER(uart->huart->hdmarx);
+
+    if(pos != uart->dma_rx_pos) {
+        if(pos > uart->dma_rx_pos) {
+            fifo_write(&uart->fifo_rx, &uart->dma_rx_buffer[uart->dma_rx_pos],
+                       pos - uart->dma_rx_pos);
+        } else {
+            fifo_write(&uart->fifo_rx, &uart->dma_rx_buffer[uart->dma_rx_pos],
+                       sizeof(uart->dma_rx_buffer) - uart->dma_rx_pos);
+            if(pos > 0) {
+                fifo_write(&uart->fifo_rx, uart->dma_rx_buffer, pos);
+            }
+        }
+        uart->dma_rx_pos = pos;
+    }
+
+    __set_PRIMASK(primask);
+}
+
+static size_t uart_output(const void *data, size_t data_size, void *arg) {
+    uart_t *uart = arg;
+
+    const uint8_t *buffer = data;
+    uint32_t n;
+    uint32_t total = 0;
+    while(total < data_size) {
+        n = fifo_write(&uart->fifo_tx, &buffer[total], data_size - total);
+        if(n < (data_size - total)) {
+            tmr_restart(&uart->timeout_tx);
+            uart_send(uart);
+        }
+        total += n;
+    }
+    return data_size;
+}
+
+static void uart_init(uart_t *uart, UART_HandleTypeDef *huart) {
+    uart->huart = huart;
+    uart->dma_tx_ready = 1;
+    uart->dma_rx_pos = 0;
+    fifo_init(&uart->fifo_tx);
+    fifo_init(&uart->fifo_rx);
+    tmr_init(&uart->timeout_tx, 10);
+    tmr_init(&uart->timeout_rx, 10);
+    HAL_UART_Receive_DMA(uart->huart, uart->dma_rx_buffer, sizeof(uart->dma_rx_buffer));
+}
+
+static void uart_loop(uart_t *uart, struct mg_pppos *pppos) {
+    if(tmr_timeout(&uart->timeout_tx)) {
+        tmr_reset(&uart->timeout_tx);
+        uart_send(uart);
+    }
+
+    if(tmr_timeout(&uart->timeout_rx)) {
+        tmr_reset(&uart->timeout_rx);
+        uart_recv(uart);
+    }
+
+    uint8_t buffer_rx[128];
+    const uint32_t buffer_len = fifo_read(&uart->fifo_rx, buffer_rx, sizeof(buffer_rx));
+    if(buffer_len > 0) {
+        mg_pppos_input(pppos, buffer_rx, buffer_len);
+    }
+}
+
+void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart) {
+    if(huart == uart.huart) {
+        uart.dma_tx_ready = 1;
+    }
+}
+
+void HAL_UART_RxHalfCpltCallback(UART_HandleTypeDef *huart) {
+    if(huart == uart.huart) {
+        tmr_restart(&uart.timeout_rx);
+        uart_recv(&uart);
+    }
+}
+
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
+    if(huart == uart.huart) {
+        tmr_restart(&uart.timeout_rx);
+        uart_recv(&uart);
+    }
 }
 
 static void delay_us(const uint32_t time_us) {
@@ -161,6 +223,14 @@ static void tacho_isr(tacho_t *tacho) {
     tacho->buffer_counter++;
     if(tacho->buffer_counter >= TACHO_BUFFER) {
         tacho->buffer_counter = 0;
+    }
+}
+
+tacho_t tacho;
+
+void HAL_GPIO_EXTI_Rising_Callback(uint16_t GPIO_Pin) {
+    if(GPIO_Pin == GPIO_PIN_0) {
+        tacho_isr(&tacho);
     }
 }
 
@@ -321,6 +391,12 @@ static void ina226_read(ina226_t *ina226, float *voltage, float *current) {
     }
 }
 
+void HAL_I2C_MemRxCpltCallback(I2C_HandleTypeDef *hi2c) {
+    if(hi2c == &hi2c3) {
+        i2c_ready = 1;
+    }
+}
+
 #define DS18B20_SKIP_ROM        0xCC
 #define DS18B20_CONVERT_T       0x44
 #define DS18B20_READ_SCRATCHPAD 0xBE
@@ -411,33 +487,6 @@ static void ds18b20_read(ds18b20_t *ds18b20, float *temperature) {
 
             ds18b20->state = DS18B20_STATE_IDLE;
         } break;
-    }
-}
-
-tacho_t tacho;
-
-void HAL_GPIO_EXTI_Rising_Callback(uint16_t GPIO_Pin) {
-    if(GPIO_Pin == GPIO_PIN_0) {
-        tacho_isr(&tacho);
-    }
-}
-
-void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart) {
-    if(huart == &huart2) {
-        send_ready = 1;
-    }
-}
-
-void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
-    if(huart == &huart2) {
-        fifo_write(&context.fifo_rx, (uint8_t *)&recv_byte, 1);
-        HAL_UART_Receive_IT(&huart2, (uint8_t *)&recv_byte, 1);
-    }
-}
-
-void HAL_I2C_MemRxCpltCallback(I2C_HandleTypeDef *hi2c) {
-    if(hi2c == &hi2c3) {
-        i2c_ready = 1;
     }
 }
 
@@ -548,11 +597,11 @@ static void http_event(struct mg_connection *c, int ev, void *ev_data) {
             }
         }
     } else if(ev == MG_EV_WS_MSG) {
-        // struct mg_ws_message *wm = (struct mg_ws_message *)ev_data;
+        struct mg_ws_message *wm = (struct mg_ws_message *)ev_data;
 
-        // if(mg_strcmp(wm->data, mg_str("offset")) == 0) {
-        context->button = BUTTON_OFFSET;
-        //}
+        if(mg_strcmp(wm->data, mg_str("offset")) == 0) {
+            context->button = BUTTON_OFFSET;
+        }
     } else if(ev == MG_EV_CLOSE) {
         for(uint32_t i = 0; i < WS_CONN_MAX; i++) {
             if(context->ws_conns[i] == c) {
@@ -566,16 +615,29 @@ int main() {
     HAL_Init();
     SystemClock_Config();
     MX_GPIO_Init();
+    MX_DMA_Init();
     MX_TIM1_Init();
     MX_TIM2_Init();
     MX_I2C3_Init();
     MX_USART2_UART_Init();
 
+    hx711_t hx711;
+    ina226_t ina226;
+    ds18b20_t ds18b20;
+
+    HAL_TIM_Base_Start(&htim1);
+
+    uart_init(&uart, &huart2);
+    tacho_init(&tacho);
+    hx711_init(&hx711);
+    ina226_init(&ina226);
+    ds18b20_init(&ds18b20);
+
     struct mg_mgr mgr;
     mg_mgr_init(&mgr);
 
     struct mg_pppos pppos;
-    mg_pppos_init_state(&pppos, ppp_output, NULL, NULL, &context);
+    mg_pppos_init_state(&pppos, uart_output, NULL, NULL, &uart);
 
     struct mg_tcpip_if netif = {0};
     netif.driver = mg_pppos_driver(&pppos);
@@ -586,28 +648,8 @@ int main() {
 
     mg_http_listen(&mgr, "http://0.0.0.0:80", http_event, &context);
 
-    context.state = STATE_DISCONNECTED;
-    fifo_init(&context.fifo_tx);
-    fifo_init(&context.fifo_rx);
-    HAL_UART_Receive_IT(&huart2, (uint8_t *)&recv_byte, 1);
-
-    HAL_TIM_Base_Start(&htim1);
-
-    tacho_init(&tacho);
-
-    hx711_t hx711;
-    hx711_init(&hx711);
-
-    ina226_t ina226;
-    ina226_init(&ina226);
-
-    ds18b20_t ds18b20;
-    ds18b20_init(&ds18b20);
-
     uint32_t prev1 = 0;
     uint32_t prev2 = 0;
-    uint8_t send_buffer[1024];
-    uint8_t recv_buffer[1024];
 
     frame_t frame = {0};
 
@@ -676,18 +718,7 @@ int main() {
             ds18b20_read(&ds18b20, &frame.temperature);
         }
 
-        const uint32_t recv_len = fifo_read(&context.fifo_rx, recv_buffer, sizeof(recv_buffer));
-        if(recv_len > 0) {
-            mg_pppos_input(&pppos, recv_buffer, recv_len);
-        }
-
-        if(send_ready) {
-            const uint32_t send_len = fifo_read(&context.fifo_tx, send_buffer, sizeof(send_buffer));
-            if(send_len > 0) {
-                send_ready = 0;
-                HAL_UART_Transmit_IT(&huart2, send_buffer, send_len);
-            }
-        }
+        uart_loop(&uart, &pppos);
 
         mg_mgr_poll(&mgr, 1);
     }
