@@ -1,4 +1,5 @@
 const ws = new WebSocket("ws://" + location.host + ":80/websocket")
+const decoder = new TextDecoder();
 
 ws.binaryType = "arraybuffer"
 
@@ -7,20 +8,18 @@ ws.onerror = (e) => {
 }
 
 ws.onmessage = (event) => {
-    const view = new DataView(event.data)
+    const data = JSON.parse(decoder.decode(event.data))
 
-    document.getElementById("thrust").textContent = view.getFloat32(0, true).toFixed(3)
-    document.getElementById("torque").textContent = view.getFloat32(4, true).toFixed(5)
-    document.getElementById("velocity").textContent = view.getFloat32(8, true).toFixed(0)
-    document.getElementById("temperature").textContent = view.getFloat32(12, true).toFixed(1)
-    document.getElementById("voltage").textContent = view.getFloat32(16, true).toFixed(2)
-    document.getElementById("current").textContent = view.getFloat32(20, true).toFixed(2)
-
-    document.getElementById("thrust_load").textContent = view.getInt32(24, true) + " LSB"
-    document.getElementById("torque_load1").textContent = view.getInt32(28, true) + " LSB"
-    document.getElementById("torque_load2").textContent = view.getInt32(32, true) + " LSB"
-
-    document.getElementById("velocity_frequency").textContent = view.getFloat32(36, true).toFixed(2) + " Hz"
+    document.getElementById("thrust").textContent = data.thrust.toFixed(3)
+    document.getElementById("thrust_raw").textContent = data.thrust_raw + " LSB"
+    document.getElementById("torque").textContent = data.torque.toFixed(5)
+    document.getElementById("torque_raw1").textContent = data.torque_raw1 + " LSB"
+    document.getElementById("torque_raw2").textContent = data.torque_raw2 + " LSB"
+    document.getElementById("velocity").textContent = data.vel.toFixed(0)
+    document.getElementById("velocity_raw").textContent = data.vel_raw.toFixed(2) + " Hz"
+    document.getElementById("temperature").textContent = data.temp.toFixed(1)
+    document.getElementById("voltage").textContent = data.volt.toFixed(2)
+    document.getElementById("current").textContent = data.curr.toFixed(2)
 }
 
 function sendCommand(cmd) {

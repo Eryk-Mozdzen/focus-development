@@ -166,12 +166,12 @@ static void delay_us(const uint32_t time_us) {
     }
 }
 
-#define TACHO_BUFFER 21
+#define TACHO_BUFFER 11
 
 typedef struct {
     volatile uint32_t buffer[TACHO_BUFFER];
     volatile uint32_t buffer_counter;
-    uint32_t last;
+    volatile uint32_t valid;
 } tacho_t;
 
 static void tacho_init(tacho_t *tacho) {
@@ -179,22 +179,21 @@ static void tacho_init(tacho_t *tacho) {
         tacho->buffer[i] = 0;
     }
     tacho->buffer_counter = 0;
-    tacho->last = 0;
-    HAL_TIM_Base_Start(&htim2);
+    tacho->valid = 0;
+    HAL_TIM_Base_Start_IT(&htim2);
 }
 
-static uint32_t tacho_read(tacho_t *tacho, float *frequency) {
-    const uint32_t now = HAL_GetTick();
+static void tacho_read(tacho_t *tacho, float *frequency) {
+    uint32_t sorted[TACHO_BUFFER];
+    uint32_t valid;
 
-    if((now - tacho->last) >= 100) {
-        tacho->last = now;
+    const uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+    valid = tacho->valid;
+    memcpy(sorted, (uint32_t *)tacho->buffer, TACHO_BUFFER * sizeof(uint32_t));
+    __set_PRIMASK(primask);
 
-        uint32_t sorted[TACHO_BUFFER];
-
-        __disable_irq();
-        memcpy(sorted, (uint32_t *)tacho->buffer, TACHO_BUFFER * sizeof(uint32_t));
-        __enable_irq();
-
+    if(valid) {
         for(uint32_t i = 1; i < TACHO_BUFFER; i++) {
             const uint32_t key = sorted[i];
             uint32_t j = i;
@@ -208,21 +207,8 @@ static uint32_t tacho_read(tacho_t *tacho, float *frequency) {
         const uint32_t median_period_us = sorted[TACHO_BUFFER / 2];
 
         *frequency = 1e+6f / median_period_us;
-
-        return 1;
-    }
-
-    return 0;
-}
-
-static void tacho_isr(tacho_t *tacho) {
-    const uint32_t period_us = __HAL_TIM_GET_COUNTER(&htim2);
-    __HAL_TIM_SET_COUNTER(&htim2, 0);
-
-    tacho->buffer[tacho->buffer_counter] = period_us;
-    tacho->buffer_counter++;
-    if(tacho->buffer_counter >= TACHO_BUFFER) {
-        tacho->buffer_counter = 0;
+    } else {
+        *frequency = 0.f;
     }
 }
 
@@ -230,7 +216,22 @@ tacho_t tacho;
 
 void HAL_GPIO_EXTI_Rising_Callback(uint16_t GPIO_Pin) {
     if(GPIO_Pin == GPIO_PIN_0) {
-        tacho_isr(&tacho);
+        const uint32_t period_us = __HAL_TIM_GET_COUNTER(&htim2);
+        __HAL_TIM_SET_COUNTER(&htim2, 0);
+
+        tacho.buffer[tacho.buffer_counter] = period_us;
+        tacho.buffer_counter++;
+        if(tacho.buffer_counter >= TACHO_BUFFER) {
+            tacho.buffer_counter = 0;
+            tacho.valid = 1;
+        }
+    }
+}
+
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
+    if(htim == &htim2) {
+        tacho.valid = 0;
+        tacho.buffer_counter = 0;
     }
 }
 
@@ -490,17 +491,6 @@ static void ds18b20_read(ds18b20_t *ds18b20, float *temperature) {
     }
 }
 
-typedef struct {
-    float thrust;
-    float torque;
-    float velocity;
-    float temperature;
-    float voltage;
-    float current;
-    int32_t load[3];
-    float frequency;
-} frame_t;
-
 uint64_t mg_millis(void) {
     return HAL_GetTick();
 }
@@ -651,7 +641,14 @@ int main() {
     uint32_t prev1 = 0;
     uint32_t prev2 = 0;
 
-    frame_t frame = {0};
+    float thrust = 0;
+    float torque = 0;
+    float velocity = 0;
+    float temperature = 0;
+    float voltage = 0;
+    float current = 0;
+    int32_t load[3] = {0};
+    float frequency = 0;
 
     int32_t load_raw[3] = {0};
     int32_t load_offset[3] = {0};
@@ -667,7 +664,24 @@ int main() {
 
             for(uint32_t i = 0; i < WS_CONN_MAX; i++) {
                 if(context.ws_conns[i] != NULL) {
-                    mg_ws_send(context.ws_conns[i], &frame, sizeof(frame), WEBSOCKET_OP_BINARY);
+                    char json[256];
+
+                    snprintf(json, sizeof(json), "{ \
+\"thrust\":%f,\
+\"thrust_raw\":%ld,\
+\"torque\":%f,\
+\"torque_raw1\":%ld,\
+\"torque_raw2\":%ld,\
+\"vel\":%f,\
+\"vel_raw\":%f,\
+\"curr\":%f,\
+\"volt\":%f,\
+\"temp\":%f\
+}",
+                             thrust, load[0], torque, load[1], load[2], velocity, frequency,
+                             current, voltage, temperature);
+
+                    mg_ws_send(context.ws_conns[i], json, strlen(json), WEBSOCKET_OP_BINARY);
                 }
             }
         }
@@ -684,14 +698,10 @@ int main() {
             } break;
         }
 
-        if(tacho_read(&tacho, &frame.frequency)) {
-            frame.velocity = 6.283185307f * frame.frequency;
-        }
-
         if(hx711_read(&hx711, load_raw)) {
-            frame.load[0] = load_raw[0] - load_offset[0];
-            frame.load[1] = load_raw[1] - load_offset[1];
-            frame.load[2] = load_raw[2] - load_offset[2];
+            load[0] = load_raw[0] - load_offset[0];
+            load[1] = load_raw[1] - load_offset[1];
+            load[2] = load_raw[2] - load_offset[2];
 
             const float g = 9.8067f;
             const float arm = 0.270f;
@@ -708,14 +718,17 @@ int main() {
             const float k1 = ((t1 * l22) - (t2 * l21)) / ((l11 * l22) - (l12 * l21));
             const float k2 = (-(t1 * l12) + (t2 * l11)) / ((l11 * l22) - (l12 * l21));
 
-            frame.thrust = frame.load[0] * k * g;
-            frame.torque = (k1 * frame.load[1]) + (k2 * frame.load[2]);
+            thrust = load[0] * k * g;
+            torque = (k1 * load[1]) + (k2 * load[2]);
         }
 
         if((timestamp - prev2) >= 50) {
             prev2 = timestamp;
-            ina226_read(&ina226, &frame.voltage, &frame.current);
-            ds18b20_read(&ds18b20, &frame.temperature);
+            ina226_read(&ina226, &voltage, &current);
+            ds18b20_read(&ds18b20, &temperature);
+            tacho_read(&tacho, &frequency);
+
+            velocity = 6.283185307f * frequency;
         }
 
         uart_loop(&uart, &pppos);

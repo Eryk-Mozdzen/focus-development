@@ -5,6 +5,7 @@
 #     "asyncio",
 #     "websockets",
 #     "cobs",
+#     "pyjson",
 #     "datetime",
 #     "PyQt6",
 #     "pyqtgraph",
@@ -16,6 +17,7 @@ import asyncio
 import websockets
 import cobs.cobs
 import struct
+import json
 import datetime
 import numpy as np
 import pyqtgraph as pg
@@ -175,20 +177,18 @@ class Bench:
             while True:
                 message = await self.ws.recv()
 
-                thrust, torque, velocity, temperature, voltage, current, _, _, _, _ = (
-                    struct.unpack("<6f3i1f", message)
-                )
+                data = json.loads(message)
 
                 await queue.put(
                     (
                         datetime.datetime.now(datetime.UTC),
                         {
-                            "true_thrust": thrust,
-                            "true_torque": torque,
-                            "true_velocity": velocity,
-                            "true_temperature": temperature,
-                            "true_voltage": voltage,
-                            "true_current": current,
+                            "true_thrust": data["thrust"],
+                            "true_torque": data["torque"],
+                            "true_velocity": data["vel"],
+                            "true_temperature": data["temp"],
+                            "true_voltage": data["volt"],
+                            "true_current": data["curr"],
                         },
                     )
                 )
