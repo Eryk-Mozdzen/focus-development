@@ -48,7 +48,8 @@ def curve_fit(model, x_data, y_data, **kwargs):
 
 df = (
     pd.read_csv(sys.argv[1], parse_dates=["timestamp"])
-    .drop(columns=["focus_voltage", "focus_velocity"])
+    .drop(columns=["focus_voltage", "focus_velocity", "setpoint_pwm"])
+    # .drop(columns=["focus_voltage", "focus_velocity", "setpoint_torque"])
     .replace([np.inf, -np.inf], np.nan)
     .dropna()
 )

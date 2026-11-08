@@ -35,6 +35,7 @@ typedef struct {
 
 extern TIM_HandleTypeDef htim1;
 extern TIM_HandleTypeDef htim2;
+extern TIM_HandleTypeDef htim3;
 extern I2C_HandleTypeDef hi2c3;
 extern UART_HandleTypeDef huart2;
 extern const char _binary_index_html_start[];
@@ -52,6 +53,7 @@ void MX_GPIO_Init();
 void MX_DMA_Init();
 void MX_TIM1_Init();
 void MX_TIM2_Init();
+void MX_TIM3_Init();
 void MX_I2C3_Init();
 void MX_USART2_UART_Init();
 
@@ -506,8 +508,24 @@ static void http_event(struct mg_connection *c, int ev, void *ev_data) {
     } else if(ev == MG_EV_WS_MSG) {
         struct mg_ws_message *wm = (struct mg_ws_message *)ev_data;
 
-        if(mg_strcmp(wm->data, mg_str("offset")) == 0) {
+        struct mg_str cmd;
+        struct mg_str arg;
+        mg_span(wm->data, &cmd, &arg, ' ');
+
+        if(mg_strcmp(cmd, mg_str("offset")) == 0) {
             context->button = BUTTON_OFFSET;
+        }
+
+        if(mg_strcmp(cmd, mg_str("generator")) == 0) {
+            if(arg.len > 0) {
+                uint32_t value = 0;
+                if(mg_str_to_num(arg, 10, &value, sizeof(value))) {
+                    if(value > 1000) {
+                        value = 1000;
+                    }
+                    __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, 1000 + value);
+                }
+            }
         }
     } else if(ev == MG_EV_CLOSE) {
         for(uint32_t i = 0; i < WS_CONN_MAX; i++) {
@@ -525,6 +543,7 @@ int main() {
     MX_DMA_Init();
     MX_TIM1_Init();
     MX_TIM2_Init();
+    MX_TIM3_Init();
     MX_I2C3_Init();
     MX_USART2_UART_Init();
 
@@ -532,6 +551,7 @@ int main() {
     ina226_t ina226;
 
     HAL_TIM_Base_Start(&htim1);
+    HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1);
 
     uart_init(&uart, &huart2);
     tacho_init(&tacho);
@@ -580,6 +600,9 @@ int main() {
                 if(context.ws_conns[i] != NULL) {
                     char json[256];
 
+                    const float generator =
+                        (__HAL_TIM_GET_COMPARE(&htim3, TIM_CHANNEL_1) - 1000) / 1000.f;
+
                     snprintf(json, sizeof(json), "{ \
 \"thrust\":%f,\
 \"thrust_raw\":%ld,\
@@ -590,12 +613,13 @@ int main() {
 \"vel_raw\":%f,\
 \"curr\":%f,\
 \"volt\":%f,\
-\"temp\":20\
+\"temp\":20,\
+\"gen\":%f\
 }",
                              thrust, load[2], torque, load[0], load[1], velocity, frequency,
-                             current, voltage);
+                             current, voltage, generator);
 
-                    mg_ws_send(context.ws_conns[i], json, strlen(json), WEBSOCKET_OP_BINARY);
+                    mg_ws_send(context.ws_conns[i], json, strlen(json), WEBSOCKET_OP_TEXT);
                 }
             }
         }

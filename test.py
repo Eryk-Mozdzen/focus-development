@@ -40,6 +40,7 @@ class Bus:
             "focus_voltage": None,
             "focus_velocity": None,
             "setpoint_torque": None,
+            "setpoint_pwm": None,
         }
         self.subscribers = []
 
@@ -63,12 +64,14 @@ class Bus:
 
 class Experiment:
     def __init__(self):
+        pass
+
+    async def run_focus(self, queue, focus):
         self.value = 0
         self.value_max = 0.3
-        self.step_value = 0.005
+        self.step_value = 0.01
         self.step_duration = 2
 
-    async def run(self, queue, focus):
         await focus.set(self.value)
         await asyncio.sleep(3)
 
@@ -84,6 +87,32 @@ class Experiment:
                     datetime.datetime.now(datetime.UTC),
                     {
                         "setpoint_torque": self.value,
+                    },
+                )
+            )
+            await asyncio.sleep(self.step_duration)
+
+    async def run_esc(self, queue, bench):
+        self.value = 0
+        self.value_max = 1
+        self.step_value = 0.01
+        self.step_duration = 2
+
+        await bench.generator(self.value)
+        await asyncio.sleep(1)
+
+        while True:
+            if np.abs(self.value) > np.abs(self.value_max):
+                return
+
+            self.value += self.step_value
+
+            await bench.generator(self.value)
+            await queue.put(
+                (
+                    datetime.datetime.now(datetime.UTC),
+                    {
+                        "setpoint_pwm": self.value,
                     },
                 )
             )
@@ -170,6 +199,7 @@ class Bench:
         return self
 
     async def __aexit__(self, exc_type, exc, tb):
+        await self.ws.send("generator 0")
         await self.ws.close()
 
     async def run(self, queue):
@@ -194,6 +224,10 @@ class Bench:
                 )
         except asyncio.CancelledError:
             raise
+
+    async def generator(self, generator):
+        await self.ws.send(f"generator {1000 * generator:.0f}")
+        print(f"{generator:.2f}")
 
 
 class Plotter:
@@ -342,7 +376,8 @@ async def main():
         recorder = Recorder()
 
         tasks = [
-            asyncio.create_task(experiment.run(bus, focus)),
+            asyncio.create_task(experiment.run_focus(bus, focus)),
+            # asyncio.create_task(experiment.run_esc(bus, bench)),
             asyncio.create_task(focus.run(bus)),
             asyncio.create_task(bench.run(bus)),
             asyncio.create_task(plotter1.run(bus.subscribe())),

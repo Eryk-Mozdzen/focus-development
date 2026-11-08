@@ -1,14 +1,8 @@
-const ws = new WebSocket("ws://" + location.host + ":80/websocket")
-const decoder = new TextDecoder();
-
-ws.binaryType = "arraybuffer"
-
-ws.onerror = (e) => {
-    console.error(e)
-}
+const ws = new WebSocket("ws://" + location.host + "/websocket")
+const slider = document.getElementById("slider")
 
 ws.onmessage = (event) => {
-    const data = JSON.parse(decoder.decode(event.data))
+    const data = JSON.parse(event.data)
 
     document.getElementById("thrust").textContent = data.thrust.toFixed(3)
     document.getElementById("thrust_raw").textContent = data.thrust_raw + " LSB"
@@ -20,6 +14,9 @@ ws.onmessage = (event) => {
     document.getElementById("temperature").textContent = data.temp.toFixed(1)
     document.getElementById("voltage").textContent = data.volt.toFixed(2)
     document.getElementById("current").textContent = data.curr.toFixed(2)
+
+    slider.value = 1000 * data.gen
+    document.getElementById("slider_value").textContent = (100 * data.gen).toFixed(0) + "%"
 }
 
 function sendCommand(cmd) {
@@ -27,3 +24,14 @@ function sendCommand(cmd) {
         ws.send(cmd)
 	}
 }
+
+function updateSliderUI() {
+    document.getElementById("slider_value").textContent = (0.1 * slider.value).toFixed(0) + "%"
+}
+
+slider.addEventListener("input", () => {
+    updateSliderUI()
+    sendCommand("generator " + Number(slider.value))
+})
+
+updateSliderUI()
