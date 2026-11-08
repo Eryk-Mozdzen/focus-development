@@ -1,5 +1,3 @@
-#include <string.h>
-
 #include <stm32u0xx_hal.h>
 
 #include <mg_pppos.h>
@@ -8,8 +6,6 @@
 #include "fifo.h"
 #include "ina226_regs.h"
 #include "tmr.h"
-
-#define WS_CONN_MAX 16
 
 typedef struct {
     UART_HandleTypeDef *huart;
@@ -23,14 +19,9 @@ typedef struct {
     volatile uint32_t dma_rx_pos;
 } uart_t;
 
-typedef enum {
-    BUTTON_NONE,
-    BUTTON_OFFSET,
-} button_t;
-
 typedef struct {
-    button_t button;
-    struct mg_connection *ws_conns[WS_CONN_MAX];
+    uint8_t button;
+    float generator;
 } context_t;
 
 extern TIM_HandleTypeDef htim1;
@@ -46,7 +37,6 @@ extern const char _binary_script_js_start[];
 extern const char _binary_script_js_end[];
 
 static uart_t uart;
-static context_t context;
 
 void SystemClock_Config();
 void MX_GPIO_Init();
@@ -445,94 +435,88 @@ static inline void tx_store(struct mg_connection *c, const struct tx *t) {
 static void http_event(struct mg_connection *c, int ev, void *ev_data) {
     context_t *context = c->fn_data;
 
-    if(ev == MG_EV_HTTP_MSG) {
-        struct mg_http_message *hm = (struct mg_http_message *)ev_data;
+    switch(ev) {
+        case MG_EV_HTTP_MSG: {
+            struct mg_http_message *hm = (struct mg_http_message *)ev_data;
 
-        if(mg_match(hm->uri, mg_str("/websocket"), NULL)) {
-            mg_ws_upgrade(c, hm, NULL);
-            for(uint32_t i = 0; i < WS_CONN_MAX; i++) {
-                if(context->ws_conns[i] == NULL) {
-                    context->ws_conns[i] = c;
-                    break;
+            if(mg_match(hm->uri, mg_str("/websocket"), NULL)) {
+                mg_ws_upgrade(c, hm, NULL);
+                return;
+            }
+
+            if(mg_strcmp(hm->uri, mg_str("/")) == 0) {
+                hm->uri = mg_str("/index.html");
+            }
+
+            for(size_t i = 0; i < sizeof(assets) / sizeof(assets[0]); i++) {
+                if(mg_strcmp(hm->uri, mg_str(assets[i].uri)) != 0) {
+                    continue;
                 }
+
+                const uint32_t len = (uint32_t)(assets[i].end - assets[i].start);
+
+                char header[128];
+                const uint32_t header_len = mg_snprintf(header, sizeof(header),
+                                                        "HTTP/1.1 200 OK\r\n"
+                                                        "Content-Type: %s\r\n"
+                                                        "Content-Length: %lu\r\n"
+                                                        "Connection: close\r\n"
+                                                        "\r\n",
+                                                        assets[i].mime, len);
+                mg_send(c, header, header_len);
+
+                struct tx t = {assets[i].start, len};
+                tx_store(c, &t);
+                return;
             }
-            return;
-        }
-
-        if(mg_strcmp(hm->uri, mg_str("/")) == 0) {
-            hm->uri = mg_str("/index.html");
-        }
-
-        for(size_t i = 0; i < sizeof(assets) / sizeof(assets[0]); i++) {
-            if(mg_strcmp(hm->uri, mg_str(assets[i].uri)) != 0) {
-                continue;
+            mg_http_reply(c, 404, "Connection: close\r\n", "Not found\n");
+        } break;
+        case MG_EV_POLL:
+        case MG_EV_WRITE: {
+            if(c->is_listening || c->is_draining || c->is_closing || c->is_websocket) {
+                return;
             }
 
-            size_t len = (size_t)(assets[i].end - assets[i].start);
-
-            mg_printf(c,
-                      "HTTP/1.1 200 OK\r\n"
-                      "Content-Type: %s\r\n"
-                      "Content-Length: %lu\r\n"
-                      "Connection: close\r\n"
-                      "\r\n",
-                      assets[i].mime, (unsigned long)len);
-
-            struct tx t = {assets[i].start, len};
-            tx_store(c, &t);
-            return;
-        }
-        mg_http_reply(c, 404, "Connection: close\r\n", "Not found\n");
-
-    } else if(ev == MG_EV_POLL || ev == MG_EV_WRITE) {
-        if(c->is_listening || c->is_draining || c->is_closing) {
-            return;
-        }
-
-        struct tx t;
-        tx_load(c, &t);
-        if(t.left == 0) {
-            return;
-        }
-
-        if(c->send.len < CHUNK) {
-            size_t n = t.left < CHUNK ? t.left : CHUNK;
-            mg_send(c, t.p, n);
-            t.p += n;
-            t.left -= n;
-            tx_store(c, &t);
+            struct tx t;
+            tx_load(c, &t);
             if(t.left == 0) {
-                c->is_draining = 1;
+                return;
             }
-        }
-    } else if(ev == MG_EV_WS_MSG) {
-        struct mg_ws_message *wm = (struct mg_ws_message *)ev_data;
 
-        struct mg_str cmd;
-        struct mg_str arg;
-        mg_span(wm->data, &cmd, &arg, ' ');
-
-        if(mg_strcmp(cmd, mg_str("offset")) == 0) {
-            context->button = BUTTON_OFFSET;
-        }
-
-        if(mg_strcmp(cmd, mg_str("generator")) == 0) {
-            if(arg.len > 0) {
-                uint32_t value = 0;
-                if(mg_str_to_num(arg, 10, &value, sizeof(value))) {
-                    if(value > 1000) {
-                        value = 1000;
-                    }
-                    __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, 1000 + value);
+            if(c->send.len < CHUNK) {
+                size_t n = t.left < CHUNK ? t.left : CHUNK;
+                mg_send(c, t.p, n);
+                t.p += n;
+                t.left -= n;
+                tx_store(c, &t);
+                if(t.left == 0) {
+                    c->is_draining = 1;
                 }
             }
-        }
-    } else if(ev == MG_EV_CLOSE) {
-        for(uint32_t i = 0; i < WS_CONN_MAX; i++) {
-            if(context->ws_conns[i] == c) {
-                context->ws_conns[i] = NULL;
+        } break;
+        case MG_EV_WS_MSG: {
+            struct mg_ws_message *wm = (struct mg_ws_message *)ev_data;
+
+            struct mg_str cmd;
+            struct mg_str arg;
+            mg_span(wm->data, &cmd, &arg, ' ');
+
+            if(mg_strcmp(cmd, mg_str("offset")) == 0) {
+                context->button = 1;
             }
-        }
+
+            if(mg_strcmp(cmd, mg_str("generator")) == 0) {
+                if(arg.len > 0) {
+                    uint32_t value = 0;
+                    if(mg_str_to_num(arg, 10, &value, sizeof(value))) {
+                        if(value > 1000) {
+                            value = 1000;
+                        }
+                        context->generator = 0.001f * value;
+                    }
+                }
+            }
+        } break;
     }
 }
 
@@ -549,6 +533,7 @@ int main() {
 
     hx711_t hx711;
     ina226_t ina226;
+    context_t context = {0};
 
     HAL_TIM_Base_Start(&htim1);
     HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1);
@@ -593,50 +578,14 @@ int main() {
         HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5,
                           ((timestamp % 1000) < 50) ? GPIO_PIN_SET : GPIO_PIN_RESET);
 
-        if((timestamp - prev1) >= 100) {
-            prev1 = timestamp;
-
-            for(uint32_t i = 0; i < WS_CONN_MAX; i++) {
-                if(context.ws_conns[i] != NULL) {
-                    char json[256];
-
-                    const float generator =
-                        (__HAL_TIM_GET_COMPARE(&htim3, TIM_CHANNEL_1) - 1000) / 1000.f;
-
-                    snprintf(json, sizeof(json), "{ \
-\"thrust\":%f,\
-\"thrust_raw\":%ld,\
-\"torque\":%f,\
-\"torque_raw1\":%ld,\
-\"torque_raw2\":%ld,\
-\"vel\":%f,\
-\"vel_raw\":%f,\
-\"curr\":%f,\
-\"volt\":%f,\
-\"temp\":20,\
-\"gen\":%f\
-}",
-                             thrust, load[2], torque, load[0], load[1], velocity, frequency,
-                             current, voltage, generator);
-
-                    mg_ws_send(context.ws_conns[i], json, strlen(json), WEBSOCKET_OP_TEXT);
-                }
-            }
-        }
-
-        switch(context.button) {
-            case BUTTON_NONE: {
-
-            } break;
-            case BUTTON_OFFSET: {
+        if(hx711_read(&hx711, load_raw)) {
+            if(context.button) {
+                context.button = 0;
                 load_offset[0] = load_raw[0];
                 load_offset[1] = load_raw[1];
                 load_offset[2] = load_raw[2];
-                context.button = BUTTON_NONE;
-            } break;
-        }
+            }
 
-        if(hx711_read(&hx711, load_raw)) {
             load[0] = load_raw[0] - load_offset[0];
             load[1] = load_raw[1] - load_offset[1];
             load[2] = load_raw[2] - load_offset[2];
@@ -660,17 +609,48 @@ int main() {
             torque = (k1 * load[0]) + (k2 * load[1]);
         }
 
-        if((timestamp - prev2) >= 50) {
-            prev2 = timestamp;
+        if((timestamp - prev1) >= 50) {
+            prev1 = timestamp;
+
             ina226_read(&ina226, &voltage, &current);
             tacho_read(&tacho, &frequency);
-
             velocity = 6.283185307f * frequency;
+
+            __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, 1000 + (1000 * context.generator));
         }
 
-        uart_loop(&uart, &pppos);
+        if((timestamp - prev2) >= 100) {
+            prev2 = timestamp;
+
+            char json[256];
+            const uint32_t json_len =
+                mg_snprintf(json, sizeof(json),
+                            "{"
+                            "\"thrust\":%f,"
+                            "\"thrust_raw\":%ld,"
+                            "\"torque\":%f,"
+                            "\"torque_raw1\":%ld,"
+                            "\"torque_raw2\":%ld,"
+                            "\"vel\":%f,"
+                            "\"vel_raw\":%f,"
+                            "\"curr\":%f,"
+                            "\"volt\":%f,"
+                            "\"temp\":20,"
+                            "\"gen\":%f"
+                            "}",
+                            thrust, load[2], torque, load[0], load[1], velocity, frequency, current,
+                            voltage, context.generator);
+
+            for(struct mg_connection *c = mgr.conns; c != NULL; c = c->next) {
+                if(c->is_websocket) {
+                    mg_ws_send(c, json, json_len, WEBSOCKET_OP_TEXT);
+                }
+            }
+        }
 
         mg_mgr_poll(&mgr, 1);
+
+        uart_loop(&uart, &pppos);
     }
 
     return 0;
