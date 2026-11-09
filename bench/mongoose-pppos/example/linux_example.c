@@ -90,7 +90,8 @@ int main(int argc, char *argv[]) {
   netif.mask = mg_htonl(0xffffffff);
   netif.l2type = MG_TCPIP_L2_PPP;
   netif.enable_dhcp_client = false;
-  mg_pppos_init_state(&s_pppos, serial_write, serial_init, serial_link, NULL);
+  mg_pppos_init_state(&s_pppos, serial_write, serial_init, NULL, serial_link,
+                      NULL);
   netif.driver = mg_pppos_driver(&s_pppos);
   netif.driver_data = &s_pppos;
   mg_tcpip_init(&mgr, &netif);

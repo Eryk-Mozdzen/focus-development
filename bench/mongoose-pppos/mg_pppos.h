@@ -26,6 +26,11 @@ typedef size_t (*mg_pppos_write_fn)(const void *data, size_t len, void *arg);
 // Optional UART/device initialization callback.
 typedef bool (*mg_pppos_init_fn)(void *arg);
 
+struct mg_pppos;
+
+// Optional serial poll callback, called from the TCP/IP driver poll.
+typedef void (*mg_pppos_poll_fn)(void *arg, struct mg_pppos *state);
+
 // Optional physical-link query. If NULL, the link is considered up.
 typedef bool (*mg_pppos_link_fn)(void *arg);
 
@@ -34,6 +39,7 @@ struct mg_pppos {
   struct mg_tcpip_driver driver;
   mg_pppos_write_fn write;
   mg_pppos_init_fn init;
+  mg_pppos_poll_fn poll;
   mg_pppos_link_fn link;
   void *arg;
   uint16_t restart_id;
@@ -54,9 +60,9 @@ struct mg_pppos {
 // ifp->l2type = MG_TCPIP_L2_PPP, and a nonzero local/peer IP configuration as
 // appropriate for the existing Mongoose PPP implementation.
 void mg_pppos_init_state(struct mg_pppos *state, mg_pppos_write_fn write,
-                        mg_pppos_init_fn init, mg_pppos_link_fn link,
-                        void *arg);
-struct mg_tcpip_driver *mg_pppos_driver(struct mg_pppos *state);
+                         mg_pppos_init_fn init, mg_pppos_poll_fn poll,
+                         mg_pppos_link_fn link, void *arg);
+#define mg_pppos_driver(state) (&(state)->driver)
 
 // Send an LCP Configure-Request periodically while PPP negotiation is pending,
 // prompting a peer with a stale session to renegotiate. Set to zero to disable.

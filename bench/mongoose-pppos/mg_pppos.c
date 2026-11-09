@@ -100,6 +100,7 @@ static size_t pppos_rx(void *buf, size_t len, struct mg_tcpip_if *ifp) {
 
 static bool pppos_poll(struct mg_tcpip_if *ifp, bool expired_1000ms) {
   struct mg_pppos *s = (struct mg_pppos *) ifp->driver_data;
+  if (s != NULL && s->poll != NULL) s->poll(s->arg, s);
   if (s != NULL && ifp->state >= MG_TCPIP_STATE_IP) s->restart_recovery = false;
   if (s != NULL && expired_1000ms && s->restart_interval != 0 &&
       !s->restart_complete && ifp->state < MG_TCPIP_STATE_IP) {
@@ -174,12 +175,13 @@ void mg_pppos_input(struct mg_pppos *s, const void *data, size_t len) {
 }
 
 void mg_pppos_init_state(struct mg_pppos *s, mg_pppos_write_fn write,
-                         mg_pppos_init_fn init, mg_pppos_link_fn link,
-                         void *arg) {
+                         mg_pppos_init_fn init, mg_pppos_poll_fn poll,
+                         mg_pppos_link_fn link, void *arg) {
   if (s == NULL) return;
   memset(s, 0, sizeof(*s));
   s->write = write;
   s->init = init;
+  s->poll = poll;
   s->link = link;
   s->arg = arg;
   s->restart_interval = MG_PPPOS_RESTART_INTERVAL;
@@ -188,10 +190,6 @@ void mg_pppos_init_state(struct mg_pppos *s, mg_pppos_write_fn write,
   s->driver.tx = pppos_tx;
   s->driver.rx = pppos_rx;
   s->driver.poll = pppos_poll;
-}
-
-struct mg_tcpip_driver *mg_pppos_driver(struct mg_pppos *s) {
-  return s == NULL ? NULL : &s->driver;
 }
 
 void mg_pppos_set_restart_interval(struct mg_pppos *s, uint16_t seconds) {

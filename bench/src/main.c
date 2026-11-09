@@ -30,9 +30,7 @@ extern TIM_HandleTypeDef htim3;
 extern I2C_HandleTypeDef hi2c3;
 extern UART_HandleTypeDef huart2;
 extern const char _binary_index_html_start[];
-extern const char _binary_index_html_end[];
-
-static uart_t uart;
+extern const char _binary_index_html_size[];
 
 void SystemClock_Config();
 void MX_GPIO_Init();
@@ -82,7 +80,7 @@ static void uart_recv(uart_t *uart) {
     __set_PRIMASK(primask);
 }
 
-static size_t uart_output(const void *data, size_t data_size, void *arg) {
+static size_t uart_write(const void *data, size_t data_size, void *arg) {
     uart_t *uart = arg;
 
     const uint8_t *buffer = data;
@@ -99,8 +97,9 @@ static size_t uart_output(const void *data, size_t data_size, void *arg) {
     return data_size;
 }
 
-static void uart_init(uart_t *uart, UART_HandleTypeDef *huart) {
-    uart->huart = huart;
+static bool uart_init(void *arg) {
+    uart_t *uart = arg;
+    uart->huart = &huart2;
     uart->dma_tx_ready = 1;
     uart->dma_rx_pos = 0;
     fifo_init(&uart->fifo_tx);
@@ -108,9 +107,11 @@ static void uart_init(uart_t *uart, UART_HandleTypeDef *huart) {
     tmr_init(&uart->timeout_tx, 1);
     tmr_init(&uart->timeout_rx, 1);
     HAL_UART_Receive_DMA(uart->huart, uart->dma_rx_buffer, sizeof(uart->dma_rx_buffer));
+    return true;
 }
 
-static void uart_loop(uart_t *uart, struct mg_pppos *pppos) {
+static void uart_poll(void *arg, struct mg_pppos *pppos) {
+    uart_t *uart = arg;
     if(tmr_timeout(&uart->timeout_tx)) {
         tmr_reset(&uart->timeout_tx);
         uart_send(uart);
@@ -127,6 +128,8 @@ static void uart_loop(uart_t *uart, struct mg_pppos *pppos) {
         mg_pppos_input(pppos, buffer_rx, buffer_len);
     }
 }
+
+static uart_t uart;
 
 void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart) {
     if(huart == uart.huart) {
@@ -400,20 +403,11 @@ uint64_t mg_millis(void) {
     return HAL_GetTick();
 }
 
-#define CHUNK 512
-
-struct tx {
-    const char *p;
-    size_t left;
+static const struct mg_mem_file files[2] = {
+    {"/web/index.html", (const unsigned char *)_binary_index_html_start,
+     (size_t)_binary_index_html_size,                                       0},
+    {NULL,              NULL,                                            0, 0},
 };
-
-static inline void tx_load(struct mg_connection *c, struct tx *t) {
-    memcpy(t, c->data, sizeof(*t));
-}
-
-static inline void tx_store(struct mg_connection *c, const struct tx *t) {
-    memcpy(c->data, t, sizeof(*t));
-}
 
 static void http_event(struct mg_connection *c, int ev, void *ev_data) {
     context_t *context = c->fn_data;
@@ -427,49 +421,12 @@ static void http_event(struct mg_connection *c, int ev, void *ev_data) {
                 return;
             }
 
-            if((mg_strcmp(hm->uri, mg_str("/")) != 0) &&
-               (mg_strcmp(hm->uri, mg_str("/index.html")) != 0)) {
-                mg_http_reply(c, 404, "Connection: close\r\n", "Not found\n");
-                return;
-            }
-
-            const uint32_t len = (uint32_t)(_binary_index_html_end - _binary_index_html_start);
-
-            char header[128];
-            const uint32_t header_len = mg_snprintf(header, sizeof(header),
-                                                    "HTTP/1.1 200 OK\r\n"
-                                                    "Content-Type: text/html\r\n"
-                                                    "Content-Length: %lu\r\n"
-                                                    "Connection: close\r\n"
-                                                    "\r\n",
-                                                    len);
-            mg_send(c, header, header_len);
-
-            const struct tx t = {_binary_index_html_start, len};
-            tx_store(c, &t);
-        } break;
-        case MG_EV_POLL:
-        case MG_EV_WRITE: {
-            if(c->is_listening || c->is_draining || c->is_closing || c->is_websocket) {
-                return;
-            }
-
-            struct tx t;
-            tx_load(c, &t);
-            if(t.left == 0) {
-                return;
-            }
-
-            if(c->send.len < CHUNK) {
-                size_t n = t.left < CHUNK ? t.left : CHUNK;
-                mg_send(c, t.p, n);
-                t.p += n;
-                t.left -= n;
-                tx_store(c, &t);
-                if(t.left == 0) {
-                    c->is_draining = 1;
-                }
-            }
+            const struct mg_http_serve_opts opts = {
+                .root_dir = "/web",
+                .fs = &mg_fs_packed,
+            };
+            mg_mem_files = files;
+            mg_http_serve_dir(c, hm, &opts);
         } break;
         case MG_EV_WS_MSG: {
             struct mg_ws_message *wm = ev_data;
@@ -514,8 +471,6 @@ int main() {
 
     HAL_TIM_Base_Start(&htim1);
     HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1);
-
-    uart_init(&uart, &huart2);
     tacho_init(&tacho);
     hx711_init(&hx711);
     ina226_init(&ina226);
@@ -524,13 +479,13 @@ int main() {
     mg_mgr_init(&mgr);
 
     struct mg_pppos pppos;
-    mg_pppos_init_state(&pppos, uart_output, NULL, NULL, &uart);
+    mg_pppos_init_state(&pppos, uart_write, uart_init, uart_poll, NULL, &uart);
 
-    struct mg_tcpip_if netif = {0};
-    netif.driver = mg_pppos_driver(&pppos);
-    netif.driver_data = &pppos;
-    netif.l2type = MG_TCPIP_L2_PPP;
-    netif.enable_dhcp_client = false;
+    struct mg_tcpip_if netif = {
+        .driver = mg_pppos_driver(&pppos),
+        .driver_data = &pppos,
+        .l2type = MG_TCPIP_L2_PPP,
+    };
     mg_tcpip_init(&mgr, &netif);
 
     mg_http_listen(&mgr, "http://0.0.0.0:80", http_event, &context);
@@ -626,8 +581,6 @@ int main() {
         }
 
         mg_mgr_poll(&mgr, 1);
-
-        uart_loop(&uart, &pppos);
     }
 
     return 0;

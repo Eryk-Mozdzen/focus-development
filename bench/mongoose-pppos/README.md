@@ -19,7 +19,8 @@ static struct mg_tcpip_if netif;
 // UART callbacks are application-specific. write_serial() must enqueue or
 // transmit the entire encoded frame and return its byte count. uart_init() may
 // be NULL.
-mg_pppos_init_state(&pppos, write_serial, uart_init, uart_link_is_up, uart);
+mg_pppos_init_state(&pppos, write_serial, uart_init, uart_poll,
+                    uart_link_is_up, uart);
 // Optional: retry stale-session recovery every 5 seconds (the default).
 mg_pppos_set_restart_interval(&pppos, 5);
 netif.driver = mg_pppos_driver(&pppos);
@@ -28,9 +29,11 @@ netif.l2type = MG_TCPIP_L2_PPP;
 netif.enable_dhcp_client = false;  // Mongoose PPP expects negotiated/static IP
 mg_tcpip_init(&mgr, &netif);
 
-// From the UART RX callback/task, pass every received byte chunk:
-mg_pppos_input(&pppos, bytes, count);
+// uart_poll() is called from the PPPoS driver poll on each mg_mgr_poll().
+// It services UART TX/RX and calls mg_pppos_input() for received byte chunks.
 ```
+
+Pass `NULL` for `process` if UART receive data is delivered asynchronously.
 
 While negotiation is pending, the driver sends an RFC 1661 LCP
 Configure-Request at the configured interval. A peer such as `pppd` that is

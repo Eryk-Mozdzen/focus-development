@@ -5,6 +5,6 @@
 #define MG_ENABLE_CUSTOM_MILLIS 1
 #define MG_ENABLE_TCPIP         1
 #define MG_ENABLE_LOG           0
-#define MG_IO_SIZE              512
+#define MG_IO_SIZE              256
 
 #endif
