@@ -31,10 +31,6 @@ extern I2C_HandleTypeDef hi2c3;
 extern UART_HandleTypeDef huart2;
 extern const char _binary_index_html_start[];
 extern const char _binary_index_html_end[];
-extern const char _binary_style_css_start[];
-extern const char _binary_style_css_end[];
-extern const char _binary_script_js_start[];
-extern const char _binary_script_js_end[];
 
 static uart_t uart;
 
@@ -406,22 +402,9 @@ uint64_t mg_millis(void) {
 
 #define CHUNK 512
 
-struct asset {
-    const char *uri;
-    const char *mime;
-    const char *start;
-    const char *end;
-};
-
 struct tx {
     const char *p;
     size_t left;
-};
-
-static const struct asset assets[] = {
-    {"/index.html", "text/html",              _binary_index_html_start, _binary_index_html_end},
-    {"/style.css",  "text/css",               _binary_style_css_start,  _binary_style_css_end },
-    {"/script.js",  "application/javascript", _binary_script_js_start,  _binary_script_js_end },
 };
 
 static inline void tx_load(struct mg_connection *c, struct tx *t) {
@@ -437,39 +420,33 @@ static void http_event(struct mg_connection *c, int ev, void *ev_data) {
 
     switch(ev) {
         case MG_EV_HTTP_MSG: {
-            struct mg_http_message *hm = (struct mg_http_message *)ev_data;
+            struct mg_http_message *hm = ev_data;
 
             if(mg_match(hm->uri, mg_str("/websocket"), NULL)) {
                 mg_ws_upgrade(c, hm, NULL);
                 return;
             }
 
-            if(mg_strcmp(hm->uri, mg_str("/")) == 0) {
-                hm->uri = mg_str("/index.html");
-            }
-
-            for(size_t i = 0; i < sizeof(assets) / sizeof(assets[0]); i++) {
-                if(mg_strcmp(hm->uri, mg_str(assets[i].uri)) != 0) {
-                    continue;
-                }
-
-                const uint32_t len = (uint32_t)(assets[i].end - assets[i].start);
-
-                char header[128];
-                const uint32_t header_len = mg_snprintf(header, sizeof(header),
-                                                        "HTTP/1.1 200 OK\r\n"
-                                                        "Content-Type: %s\r\n"
-                                                        "Content-Length: %lu\r\n"
-                                                        "Connection: close\r\n"
-                                                        "\r\n",
-                                                        assets[i].mime, len);
-                mg_send(c, header, header_len);
-
-                struct tx t = {assets[i].start, len};
-                tx_store(c, &t);
+            if((mg_strcmp(hm->uri, mg_str("/")) != 0) &&
+               (mg_strcmp(hm->uri, mg_str("/index.html")) != 0)) {
+                mg_http_reply(c, 404, "Connection: close\r\n", "Not found\n");
                 return;
             }
-            mg_http_reply(c, 404, "Connection: close\r\n", "Not found\n");
+
+            const uint32_t len = (uint32_t)(_binary_index_html_end - _binary_index_html_start);
+
+            char header[128];
+            const uint32_t header_len = mg_snprintf(header, sizeof(header),
+                                                    "HTTP/1.1 200 OK\r\n"
+                                                    "Content-Type: text/html\r\n"
+                                                    "Content-Length: %lu\r\n"
+                                                    "Connection: close\r\n"
+                                                    "\r\n",
+                                                    len);
+            mg_send(c, header, header_len);
+
+            const struct tx t = {_binary_index_html_start, len};
+            tx_store(c, &t);
         } break;
         case MG_EV_POLL:
         case MG_EV_WRITE: {
@@ -495,7 +472,7 @@ static void http_event(struct mg_connection *c, int ev, void *ev_data) {
             }
         } break;
         case MG_EV_WS_MSG: {
-            struct mg_ws_message *wm = (struct mg_ws_message *)ev_data;
+            struct mg_ws_message *wm = ev_data;
 
             struct mg_str cmd;
             struct mg_str arg;

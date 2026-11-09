@@ -121,8 +121,6 @@ add_custom_command(TARGET ${CMAKE_PROJECT_NAME}.elf POST_BUILD
 
 include(embed.cmake)
 target_embed_file(${CMAKE_PROJECT_NAME}.elf "${CMAKE_SOURCE_DIR}/web/index.html")
-target_embed_file(${CMAKE_PROJECT_NAME}.elf "${CMAKE_SOURCE_DIR}/web/style.css")
-target_embed_file(${CMAKE_PROJECT_NAME}.elf "${CMAKE_SOURCE_DIR}/web/script.js")
 
 add_custom_target(flash
     STM32_Programmer_CLI -c port=SWD -w ${CMAKE_PROJECT_NAME}.elf -rst
