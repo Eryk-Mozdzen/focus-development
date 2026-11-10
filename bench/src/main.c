@@ -765,9 +765,10 @@ int main() {
     int32_t load[3] = {0};
     float frequency = 0;
     float temperature = 0;
-    float env_humidity = 0;
-    float env_temperature = 0;
-    float env_pressure = 0;
+    float env1_humidity = 0;
+    float env1_temperature = 0;
+    float env2_pressure = 0;
+    float env2_temperature = 0;
 
     int32_t load_raw[3] = {0};
     int32_t load_offset[3] = {0};
@@ -809,18 +810,9 @@ int main() {
             torque = (k1 * load[0]) + (k2 * load[1]);
         }
 
-        float hum;
-        float temp;
-        if(dht22_read(&dht22, &hum, &temp)) {
-            env_humidity = hum;
-        }
-
-        float press;
-        if(bmp280_read(&bmp280, &press, &temp)) {
-            env_pressure = press;
-            env_temperature = temp;
-            temperature = env_temperature;
-        }
+        dht22_read(&dht22, &env1_humidity, &env1_temperature);
+        bmp280_read(&bmp280, &env2_pressure, &env2_temperature);
+        temperature = env2_temperature;
 
         if((timestamp - prev1) >= 50) {
             prev1 = timestamp;
@@ -836,26 +828,28 @@ int main() {
             prev2 = timestamp;
 
             char json[512];
-            const uint32_t json_len = mg_snprintf(
-                json, sizeof(json),
-                "{"
-                "\"thrust\":%f,"
-                "\"thrust_raw\":%ld,"
-                "\"torque\":%f,"
-                "\"torque_raw1\":%ld,"
-                "\"torque_raw2\":%ld,"
-                "\"vel\":%f,"
-                "\"vel_raw\":%f,"
-                "\"curr\":%f,"
-                "\"volt\":%f,"
-                "\"temp\":%f,"
-                "\"env_temp\":%f,"
-                "\"env_press\":%f,"
-                "\"env_hum\":%f,"
-                "\"gen\":%f"
-                "}",
-                thrust, load[2], torque, load[0], load[1], velocity, frequency, current, voltage,
-                temperature, env_temperature, env_pressure, env_humidity, context.generator);
+            const uint32_t json_len =
+                mg_snprintf(json, sizeof(json),
+                            "{"
+                            "\"thrust\":%f,"
+                            "\"thrust_raw\":%ld,"
+                            "\"torque\":%f,"
+                            "\"torque_raw1\":%ld,"
+                            "\"torque_raw2\":%ld,"
+                            "\"vel\":%f,"
+                            "\"vel_raw\":%f,"
+                            "\"curr\":%f,"
+                            "\"volt\":%f,"
+                            "\"temp\":%f,"
+                            "\"env1_hum\":%f,"
+                            "\"env1_temp\":%f,"
+                            "\"env2_press\":%f,"
+                            "\"env2_temp\":%f,"
+                            "\"gen\":%f"
+                            "}",
+                            thrust, load[2], torque, load[0], load[1], velocity, frequency, current,
+                            voltage, temperature, env1_humidity, env1_temperature, env2_pressure,
+                            env2_temperature, context.generator);
 
             for(struct mg_connection *c = mgr.conns; c != NULL; c = c->next) {
                 if(c->is_websocket) {
