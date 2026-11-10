@@ -399,6 +399,167 @@ void HAL_I2C_MemRxCpltCallback(I2C_HandleTypeDef *hi2c) {
     }
 }
 
+#define DHT22_POWERUP_MS    1000
+#define DHT22_MIN_PERIOD_MS 2000
+#define DHT22_START_LOW_MS  2
+#define DHT22_TIMEOUT_US    100
+#define DHT22_SAMPLE_US     48
+
+typedef enum {
+    DHT22_IDLE,
+    DHT22_START_LOW,
+} dht22_state_t;
+
+typedef struct {
+    GPIO_TypeDef *port;
+    uint32_t pin;
+
+    dht22_state_t state;
+    uint32_t ts;
+    uint32_t next_allowed;
+} dht22_t;
+
+static bool pin_read(const dht22_t *dht22) {
+    return (dht22->port->IDR & dht22->pin) != 0u;
+}
+
+static void pin_low(const dht22_t *dht22) {
+    dht22->port->BSRR = (dht22->pin << 16);
+}
+
+static void pin_high(const dht22_t *dht22) {
+    dht22->port->BSRR = dht22->pin;
+}
+
+static uint8_t wait_level(const dht22_t *dht22, const uint8_t level) {
+    for(uint32_t i = 0; i < DHT22_TIMEOUT_US; i++) {
+        if(pin_read(dht22) == level) {
+            return 1;
+        }
+        delay_us(1);
+    }
+    return 0;
+}
+
+static uint8_t capture_frame(const dht22_t *dht22, uint8_t data[5]) {
+    uint8_t ok = 1;
+
+    const uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+
+    pin_high(dht22);
+
+    if(!wait_level(dht22, 0)) {
+        ok = 0;
+    }
+    if(!wait_level(dht22, 1)) {
+        ok = 0;
+    }
+    if(!wait_level(dht22, 0)) {
+        ok = 0;
+    }
+
+    // first bit must be skipped, but why?
+    wait_level(dht22, 1);
+    wait_level(dht22, 0);
+
+    if(ok) {
+        data[0] = 0;
+        data[1] = 0;
+        data[2] = 0;
+        data[3] = 0;
+        data[4] = 0;
+
+        for(uint8_t i = 0; i < 40; i++) {
+            if(!wait_level(dht22, 1)) {
+                ok = 0;
+                break;
+            }
+
+            delay_us(DHT22_SAMPLE_US);
+
+            data[i / 8] <<= 1;
+            if(pin_read(dht22)) {
+                data[i / 8] |= 0x01;
+
+                if(!wait_level(dht22, 0)) {
+                    ok = 0;
+                    break;
+                }
+            }
+        }
+    }
+
+    __set_PRIMASK(primask);
+    return ok;
+}
+
+static void dht22_init(dht22_t *dht22, GPIO_TypeDef *port, const uint32_t pin) {
+    dht22->port = port;
+    dht22->pin = pin;
+    dht22->state = DHT22_IDLE;
+    dht22->ts = 0;
+    dht22->next_allowed = HAL_GetTick() + DHT22_POWERUP_MS;
+
+    pin_high(dht22);
+}
+
+static uint8_t dht22_read(dht22_t *dht22, float *humidity, float *temperature) {
+    const uint32_t now = HAL_GetTick();
+
+    switch(dht22->state) {
+        case DHT22_IDLE: {
+            if((int32_t)(now - dht22->next_allowed) < 0) {
+                return 0;
+            }
+            pin_low(dht22);
+            dht22->ts = now;
+            dht22->state = DHT22_START_LOW;
+            return 0;
+        } break;
+        case DHT22_START_LOW: {
+            if((now - dht22->ts) < DHT22_START_LOW_MS) {
+                return 0;
+            }
+
+            uint8_t data[5];
+            const uint8_t ok = capture_frame(dht22, data);
+
+            pin_high(dht22);
+            dht22->state = DHT22_IDLE;
+            dht22->next_allowed = HAL_GetTick() + DHT22_MIN_PERIOD_MS;
+
+            if(!ok) {
+                return 0;
+            }
+
+            const uint16_t sum = data[0] + data[1] + data[2] + data[3];
+            const uint8_t checksum = sum & 0x00FF;
+            if(checksum != data[4]) {
+                return 0;
+            }
+
+            const uint16_t raw_humidity = (((uint16_t)data[0]) << 8) | data[1];
+            const uint16_t raw_temperature = (((uint16_t)(data[2] & 0x7F)) << 8) | data[3];
+
+            if(humidity != NULL) {
+                *humidity = 0.1f * raw_humidity;
+            }
+            if(temperature != NULL) {
+                *temperature = 0.1f * raw_temperature;
+
+                if(data[2] & 0x80) {
+                    *temperature *= -1.f;
+                }
+            }
+            return 1;
+        } break;
+    }
+
+    dht22->state = DHT22_IDLE;
+    return 0;
+}
+
 uint64_t mg_millis(void) {
     return HAL_GetTick();
 }
@@ -467,6 +628,7 @@ int main() {
 
     hx711_t hx711;
     ina226_t ina226;
+    dht22_t dht22;
     context_t context = {0};
 
     HAL_TIM_Base_Start(&htim1);
@@ -474,6 +636,7 @@ int main() {
     tacho_init(&tacho);
     hx711_init(&hx711);
     ina226_init(&ina226);
+    dht22_init(&dht22, GPIOA, GPIO_PIN_11);
 
     struct mg_mgr mgr;
     mg_mgr_init(&mgr);
@@ -500,6 +663,10 @@ int main() {
     float current = 0;
     int32_t load[3] = {0};
     float frequency = 0;
+    float temperature = 0;
+    float env_humidity = 0;
+    float env_temperature = 0;
+    float env_pressure = 0;
 
     int32_t load_raw[3] = {0};
     int32_t load_offset[3] = {0};
@@ -541,6 +708,14 @@ int main() {
             torque = (k1 * load[0]) + (k2 * load[1]);
         }
 
+        float hum;
+        float temp;
+        if(dht22_read(&dht22, &hum, &temp)) {
+            env_humidity = hum;
+            env_temperature = temp;
+            temperature = env_temperature;
+        }
+
         if((timestamp - prev1) >= 50) {
             prev1 = timestamp;
 
@@ -554,24 +729,27 @@ int main() {
         if((timestamp - prev2) >= 100) {
             prev2 = timestamp;
 
-            char json[256];
-            const uint32_t json_len =
-                mg_snprintf(json, sizeof(json),
-                            "{"
-                            "\"thrust\":%f,"
-                            "\"thrust_raw\":%ld,"
-                            "\"torque\":%f,"
-                            "\"torque_raw1\":%ld,"
-                            "\"torque_raw2\":%ld,"
-                            "\"vel\":%f,"
-                            "\"vel_raw\":%f,"
-                            "\"curr\":%f,"
-                            "\"volt\":%f,"
-                            "\"temp\":20,"
-                            "\"gen\":%f"
-                            "}",
-                            thrust, load[2], torque, load[0], load[1], velocity, frequency, current,
-                            voltage, context.generator);
+            char json[512];
+            const uint32_t json_len = mg_snprintf(
+                json, sizeof(json),
+                "{"
+                "\"thrust\":%f,"
+                "\"thrust_raw\":%ld,"
+                "\"torque\":%f,"
+                "\"torque_raw1\":%ld,"
+                "\"torque_raw2\":%ld,"
+                "\"vel\":%f,"
+                "\"vel_raw\":%f,"
+                "\"curr\":%f,"
+                "\"volt\":%f,"
+                "\"temp\":%f,"
+                "\"env_temp\":%f,"
+                "\"env_press\":%f,"
+                "\"env_hum\":%f,"
+                "\"gen\":%f"
+                "}",
+                thrust, load[2], torque, load[0], load[1], velocity, frequency, current, voltage,
+                temperature, env_temperature, env_pressure, env_humidity, context.generator);
 
             for(struct mg_connection *c = mgr.conns; c != NULL; c = c->next) {
                 if(c->is_websocket) {
