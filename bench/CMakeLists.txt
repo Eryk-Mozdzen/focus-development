@@ -10,6 +10,7 @@ add_executable(${CMAKE_PROJECT_NAME}.elf
     "src/main.c"
     "src/fifo.c"
     "src/tmr.c"
+    "src/bmp280_compensate.c"
 
     "cubemx/Core/Src/main.c"
     "cubemx/Core/Src/stm32u0xx_hal_msp.c"

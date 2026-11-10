@@ -3,6 +3,8 @@
 #include <mg_pppos.h>
 #include <mongoose.h>
 
+#include "bmp280_compensate.h"
+#include "bmp280_regs.h"
 #include "fifo.h"
 #include "ina226_regs.h"
 #include "tmr.h"
@@ -27,6 +29,7 @@ typedef struct {
 extern TIM_HandleTypeDef htim1;
 extern TIM_HandleTypeDef htim2;
 extern TIM_HandleTypeDef htim3;
+extern I2C_HandleTypeDef hi2c2;
 extern I2C_HandleTypeDef hi2c3;
 extern UART_HandleTypeDef huart2;
 extern const char _binary_index_html_start[];
@@ -38,6 +41,7 @@ void MX_DMA_Init();
 void MX_TIM1_Init();
 void MX_TIM2_Init();
 void MX_TIM3_Init();
+void MX_I2C2_Init();
 void MX_I2C3_Init();
 void MX_USART2_UART_Init();
 
@@ -393,12 +397,6 @@ static void ina226_read(ina226_t *ina226, float *voltage, float *current) {
     }
 }
 
-void HAL_I2C_MemRxCpltCallback(I2C_HandleTypeDef *hi2c) {
-    if(hi2c == &hi2c3) {
-        i2c_ready = 1;
-    }
-}
-
 #define DHT22_POWERUP_MS    1000
 #define DHT22_MIN_PERIOD_MS 2000
 #define DHT22_START_LOW_MS  2
@@ -560,6 +558,107 @@ static uint8_t dht22_read(dht22_t *dht22, float *humidity, float *temperature) {
     return 0;
 }
 
+typedef struct {
+    I2C_HandleTypeDef *hi2c;
+    uint8_t buffer[6];
+    volatile uint8_t ready;
+    uint32_t last;
+    uint8_t state;
+} bmp280_t;
+
+static void bmp280_write(bmp280_t *bmp280, uint8_t address, uint8_t value) {
+    HAL_I2C_Mem_Write(bmp280->hi2c, BMP280_ADDR_SDO_LOW << 1, address, 1, &value, 1, 100);
+}
+
+static void bmp280_init(bmp280_t *bmp280, I2C_HandleTypeDef *hi2c) {
+    bmp280->hi2c = hi2c;
+    bmp280->state = 0;
+
+    bmp280_write(bmp280, BMP280_REG_RESET, BMP280_RESET_VALUE);
+
+    HAL_Delay(100);
+
+    bmp280_write(bmp280, BMP280_REG_CTRL_MEAS,
+                 BMP280_CTRL_TEMP_OVERSAMPLING_2 | BMP280_CTRL_PRESS_OVERSAMPLING_16 |
+                     BMP280_CTRL_MODE_NORMAL);
+
+    bmp280_write(bmp280, BMP280_REG_CONFIG,
+                 BMP280_CONFIG_STANDBY_0_5MS | BMP280_CONFIG_FILTER_X16 |
+                     BMP280_CONFIG_SPI_3WIRE_DISABLE);
+
+    uint8_t buffer[24] = {0};
+
+    HAL_I2C_Mem_Read(bmp280->hi2c, BMP280_ADDR_SDO_LOW << 1, BMP280_REG_CALIB00, 1, buffer,
+                     sizeof(buffer), 100);
+
+    dig_T1 = (((uint16_t)buffer[1]) << 8) | buffer[0];
+    dig_T2 = (((int16_t)buffer[3]) << 8) | buffer[2];
+    dig_T3 = (((int16_t)buffer[5]) << 8) | buffer[4];
+    dig_P1 = (((uint16_t)buffer[7]) << 8) | buffer[6];
+    dig_P2 = (((int16_t)buffer[9]) << 8) | buffer[8];
+    dig_P3 = (((int16_t)buffer[11]) << 8) | buffer[10];
+    dig_P4 = (((int16_t)buffer[13]) << 8) | buffer[12];
+    dig_P5 = (((int16_t)buffer[15]) << 8) | buffer[14];
+    dig_P6 = (((int16_t)buffer[17]) << 8) | buffer[16];
+    dig_P7 = (((int16_t)buffer[19]) << 8) | buffer[18];
+    dig_P8 = (((int16_t)buffer[21]) << 8) | buffer[20];
+    dig_P9 = (((int16_t)buffer[23]) << 8) | buffer[22];
+
+    bmp280->last = HAL_GetTick();
+}
+
+static uint8_t bmp280_read(bmp280_t *bmp280, float *pressure, float *temperature) {
+    const uint32_t now = HAL_GetTick();
+
+    switch(bmp280->state) {
+        case 0: {
+            if((now - bmp280->last) >= 50) {
+                bmp280->last = now;
+                bmp280->state = 1;
+                bmp280->ready = 0;
+                memset(bmp280->buffer, 0, sizeof(bmp280->buffer));
+                HAL_I2C_Mem_Read_IT(bmp280->hi2c, BMP280_ADDR_SDO_LOW << 1, BMP280_REG_PRESS_MSB, 1,
+                                    bmp280->buffer, sizeof(bmp280->buffer));
+            }
+        } break;
+        case 1: {
+            if(bmp280->ready) {
+                bmp280->ready = 0;
+                bmp280->state = 0;
+
+                const int32_t raw_temperature = (((int32_t)bmp280->buffer[3]) << 12) |
+                                                (((int32_t)bmp280->buffer[4]) << 4) |
+                                                (((int32_t)bmp280->buffer[5]) >> 4);
+                const int32_t raw_pressure = (((int32_t)bmp280->buffer[0]) << 12) |
+                                             (((int32_t)bmp280->buffer[1]) << 4) |
+                                             (((int32_t)bmp280->buffer[2]) >> 4);
+
+                if(temperature != NULL) {
+                    *temperature = bmp280_compensate_T_int32(raw_temperature) / 100.f; // *C
+                }
+
+                if(pressure != NULL) {
+                    *pressure = bmp280_compensate_P_int64(raw_pressure) / 256.f; // Pa
+                }
+
+                return 1;
+            }
+        } break;
+    }
+
+    return 0;
+}
+
+bmp280_t bmp280;
+
+void HAL_I2C_MemRxCpltCallback(I2C_HandleTypeDef *hi2c) {
+    if(hi2c == bmp280.hi2c) {
+        bmp280.ready = 1;
+    } else if(hi2c == &hi2c3) {
+        i2c_ready = 1;
+    }
+}
+
 uint64_t mg_millis(void) {
     return HAL_GetTick();
 }
@@ -623,6 +722,7 @@ int main() {
     MX_TIM1_Init();
     MX_TIM2_Init();
     MX_TIM3_Init();
+    MX_I2C2_Init();
     MX_I2C3_Init();
     MX_USART2_UART_Init();
 
@@ -637,6 +737,7 @@ int main() {
     hx711_init(&hx711);
     ina226_init(&ina226);
     dht22_init(&dht22, GPIOA, GPIO_PIN_11);
+    bmp280_init(&bmp280, &hi2c2);
 
     struct mg_mgr mgr;
     mg_mgr_init(&mgr);
@@ -712,6 +813,11 @@ int main() {
         float temp;
         if(dht22_read(&dht22, &hum, &temp)) {
             env_humidity = hum;
+        }
+
+        float press;
+        if(bmp280_read(&bmp280, &press, &temp)) {
+            env_pressure = press;
             env_temperature = temp;
             temperature = env_temperature;
         }
