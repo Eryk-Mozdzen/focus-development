@@ -116,6 +116,10 @@ target_link_options(${CMAKE_PROJECT_NAME}.elf PRIVATE
 	-mcpu=cortex-m0
 )
 
+target_link_libraries(${CMAKE_PROJECT_NAME}.elf PRIVATE
+    m
+)
+
 add_custom_command(TARGET ${CMAKE_PROJECT_NAME}.elf POST_BUILD
     COMMAND ${CMAKE_SIZE} ${CMAKE_PROJECT_NAME}.elf
 )

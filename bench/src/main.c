@@ -1,3 +1,5 @@
+#include <math.h>
+
 #include <stm32u0xx_hal.h>
 
 #include <mg_pppos.h>
@@ -26,6 +28,7 @@ typedef struct {
     float generator;
 } context_t;
 
+extern ADC_HandleTypeDef hadc1;
 extern TIM_HandleTypeDef htim1;
 extern TIM_HandleTypeDef htim2;
 extern TIM_HandleTypeDef htim3;
@@ -38,6 +41,7 @@ extern const char _binary_index_html_size[];
 void SystemClock_Config();
 void MX_GPIO_Init();
 void MX_DMA_Init();
+void MX_ADC1_Init();
 void MX_TIM1_Init();
 void MX_TIM2_Init();
 void MX_TIM3_Init();
@@ -659,6 +663,39 @@ void HAL_I2C_MemRxCpltCallback(I2C_HandleTypeDef *hi2c) {
     }
 }
 
+#define NTC_T0      (273.15f + 25.f)
+#define NTC_R0      10000.f
+#define NTC_B       3950.f
+#define NTC_DIV_R   2470.f
+#define NTC_DIV_U   3.3f
+#define NTC_ADC_RES 4095.f
+
+typedef struct {
+    ADC_HandleTypeDef *hadc;
+} ntc_t;
+
+static void ntc_init(ntc_t *ntc, ADC_HandleTypeDef *hadc) {
+    ntc->hadc = hadc;
+}
+
+static void ntc_read(ntc_t *ntc, float *temperature) {
+    HAL_ADC_Start(ntc->hadc);
+
+    if(HAL_ADC_PollForConversion(ntc->hadc, 10) == HAL_OK) {
+        const uint32_t raw = HAL_ADC_GetValue(ntc->hadc);
+
+        const float voltage = NTC_DIV_U * (raw / NTC_ADC_RES);
+        const float resistance = (NTC_DIV_R * NTC_DIV_U / voltage) - NTC_DIV_R;
+        const float temp = 1.f / (((1.f / NTC_B) * logf(resistance / NTC_R0)) + (1.f / NTC_T0));
+
+        if(temperature != NULL) {
+            *temperature = temp - 273.15f;
+        }
+    }
+
+    HAL_ADC_Stop(ntc->hadc);
+}
+
 uint64_t mg_millis(void) {
     return HAL_GetTick();
 }
@@ -719,6 +756,7 @@ int main() {
     SystemClock_Config();
     MX_GPIO_Init();
     MX_DMA_Init();
+    MX_ADC1_Init();
     MX_TIM1_Init();
     MX_TIM2_Init();
     MX_TIM3_Init();
@@ -729,6 +767,7 @@ int main() {
     hx711_t hx711;
     ina226_t ina226;
     dht22_t dht22;
+    ntc_t ntc;
     context_t context = {0};
 
     HAL_TIM_Base_Start(&htim1);
@@ -738,6 +777,7 @@ int main() {
     ina226_init(&ina226);
     dht22_init(&dht22, GPIOA, GPIO_PIN_11);
     bmp280_init(&bmp280, &hi2c2);
+    ntc_init(&ntc, &hadc1);
 
     struct mg_mgr mgr;
     mg_mgr_init(&mgr);
@@ -812,13 +852,14 @@ int main() {
 
         dht22_read(&dht22, &env1_humidity, &env1_temperature);
         bmp280_read(&bmp280, &env2_pressure, &env2_temperature);
-        temperature = env2_temperature;
 
         if((timestamp - prev1) >= 50) {
             prev1 = timestamp;
 
             ina226_read(&ina226, &voltage, &current);
             tacho_read(&tacho, &frequency);
+            ntc_read(&ntc, &temperature);
+
             velocity = 6.283185307f * frequency;
 
             __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, 1000 + (1000 * context.generator));
