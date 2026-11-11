@@ -196,6 +196,8 @@
             document.getElementById("velocity").textContent = data.vel.toFixed(0)
             document.getElementById("velocity_raw").textContent = data.vel_raw.toFixed(2) + " Hz"
             document.getElementById("temperature").textContent = data.temp.toFixed(1)
+            document.getElementById("temperature_raw1").textContent = data.temp_raw1 + " LSB"
+            document.getElementById("temperature_raw2").textContent = data.temp_raw2.toFixed(0) + " ohm"
             document.getElementById("voltage").textContent = data.volt.toFixed(2)
             document.getElementById("current").textContent = data.curr.toFixed(2)
 
@@ -247,6 +249,8 @@
                 <div class="label">Temperature</div>
                 <div class="value" id="temperature">0.0</div>
                 <div class="unit">°C</div>
+                <div class="value_raw" id="temperature_raw1">0 LSB</div>
+                <div class="value_raw" id="temperature_raw2">0 ohm</div>
             </div>
 
             <div class="card">

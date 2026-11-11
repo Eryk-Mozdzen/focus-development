@@ -672,28 +672,53 @@ void HAL_I2C_MemRxCpltCallback(I2C_HandleTypeDef *hi2c) {
 
 typedef struct {
     ADC_HandleTypeDef *hadc;
+    uint32_t last;
+    volatile uint8_t ready;
 } ntc_t;
 
 static void ntc_init(ntc_t *ntc, ADC_HandleTypeDef *hadc) {
     ntc->hadc = hadc;
+    HAL_ADCEx_Calibration_Start(ntc->hadc);
+    ntc->last = HAL_GetTick();
 }
 
-static void ntc_read(ntc_t *ntc, float *temperature) {
-    HAL_ADC_Start(ntc->hadc);
+static void ntc_read(ntc_t *ntc, uint32_t *raw, float *resistance, float *temperature) {
+    const uint32_t now = HAL_GetTick();
 
-    if(HAL_ADC_PollForConversion(ntc->hadc, 10) == HAL_OK) {
-        const uint32_t raw = HAL_ADC_GetValue(ntc->hadc);
+    if(ntc->ready) {
+        ntc->ready = 0;
 
-        const float voltage = NTC_DIV_U * (raw / NTC_ADC_RES);
-        const float resistance = (NTC_DIV_R * NTC_DIV_U / voltage) - NTC_DIV_R;
-        const float temp = 1.f / (((1.f / NTC_B) * logf(resistance / NTC_R0)) + (1.f / NTC_T0));
+        const uint32_t u_raw = HAL_ADC_GetValue(ntc->hadc);
+        const float u_out = NTC_DIV_U * (u_raw / NTC_ADC_RES);
+        const float r1 = (NTC_DIV_R * NTC_DIV_U / u_out) - NTC_DIV_R;
+        const float t1 = 1.f / (((1.f / NTC_B) * logf(r1 / NTC_R0)) + (1.f / NTC_T0));
+
+        if(raw != NULL) {
+            *raw = u_raw;
+        }
+
+        if(resistance != NULL) {
+            *resistance = r1;
+        }
 
         if(temperature != NULL) {
-            *temperature = temp - 273.15f;
+            *temperature = t1 - 273.15f;
         }
     }
 
-    HAL_ADC_Stop(ntc->hadc);
+    if((now - ntc->last) >= 50) {
+        ntc->last = now;
+        ntc->ready = 0;
+        HAL_ADC_Start_IT(ntc->hadc);
+    }
+}
+
+ntc_t ntc;
+
+void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc) {
+    if(hadc == ntc.hadc) {
+        ntc.ready = 1;
+    }
 }
 
 uint64_t mg_millis(void) {
@@ -767,7 +792,6 @@ int main() {
     hx711_t hx711;
     ina226_t ina226;
     dht22_t dht22;
-    ntc_t ntc;
     context_t context = {0};
 
     HAL_TIM_Base_Start(&htim1);
@@ -812,6 +836,8 @@ int main() {
 
     int32_t load_raw[3] = {0};
     int32_t load_offset[3] = {0};
+    uint32_t ntc_adc = 0;
+    float ntc_resistance = 0;
 
     while(1) {
         const uint32_t timestamp = HAL_GetTick();
@@ -852,13 +878,13 @@ int main() {
 
         dht22_read(&dht22, &env1_humidity, &env1_temperature);
         bmp280_read(&bmp280, &env2_pressure, &env2_temperature);
+        ntc_read(&ntc, &ntc_adc, &ntc_resistance, &temperature);
 
         if((timestamp - prev1) >= 50) {
             prev1 = timestamp;
 
             ina226_read(&ina226, &voltage, &current);
             tacho_read(&tacho, &frequency);
-            ntc_read(&ntc, &temperature);
 
             velocity = 6.283185307f * frequency;
 
@@ -882,6 +908,8 @@ int main() {
                             "\"curr\":%f,"
                             "\"volt\":%f,"
                             "\"temp\":%f,"
+                            "\"temp_raw1\":%lu,"
+                            "\"temp_raw2\":%f,"
                             "\"env1_hum\":%f,"
                             "\"env1_temp\":%f,"
                             "\"env2_press\":%f,"
@@ -889,8 +917,8 @@ int main() {
                             "\"gen\":%f"
                             "}",
                             thrust, load[2], torque, load[0], load[1], velocity, frequency, current,
-                            voltage, temperature, env1_humidity, env1_temperature, env2_pressure,
-                            env2_temperature, context.generator);
+                            voltage, temperature, ntc_adc, ntc_resistance, env1_humidity,
+                            env1_temperature, env2_pressure, env2_temperature, context.generator);
 
             for(struct mg_connection *c = mgr.conns; c != NULL; c = c->next) {
                 if(c->is_websocket) {

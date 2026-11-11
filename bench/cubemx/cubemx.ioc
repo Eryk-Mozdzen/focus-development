@@ -1,9 +1,13 @@
 #MicroXplorer Configuration settings - do not modify
 ADC1.Channel-0\#ChannelRegularConversion=ADC_CHANNEL_5
-ADC1.IPParameters=Rank-0\#ChannelRegularConversion,RankArg-0\#ChannelRegularConversion,master,Channel-0\#ChannelRegularConversion,SelectedChannel,SamplingTime-0\#ChannelRegularConversion,NbrOfConversionFlag,SamplingTimeCommon1
+ADC1.ClockPrescaler=ADC_CLOCK_SYNC_PCLK_DIV4
+ADC1.IPParameters=Rank-0\#ChannelRegularConversion,RankArg-0\#ChannelRegularConversion,master,Channel-0\#ChannelRegularConversion,SelectedChannel,SamplingTime-0\#ChannelRegularConversion,NbrOfConversionFlag,SamplingTimeCommon1,ClockPrescaler,OversamplingMode,Ratio,RightBitShift
 ADC1.NbrOfConversionFlag=1
+ADC1.OversamplingMode=ENABLE
 ADC1.Rank-0\#ChannelRegularConversion=1
 ADC1.RankArg-0\#ChannelRegularConversion=ADC_REGULAR_RANK_1
+ADC1.Ratio=ADC_OVERSAMPLING_RATIO_256
+ADC1.RightBitShift=ADC_RIGHTBITSHIFT_8
 ADC1.SamplingTime-0\#ChannelRegularConversion=ADC_SAMPLINGTIME_COMMON_1
 ADC1.SamplingTimeCommon1=ADC_SAMPLETIME_160CYCLES_5
 ADC1.SelectedChannel=ADC_CHANNEL_5
@@ -101,6 +105,7 @@ Mcu.UserConstants=
 Mcu.UserName=STM32U083RCTx
 MxCube.Version=6.17.0
 MxDb.Version=DB.6.0.170
+NVIC.ADC_COMP1_2_IRQn=true\:0\:0\:false\:false\:true\:true\:true\:true
 NVIC.DMA1_Channel1_IRQn=true\:0\:0\:false\:false\:true\:false\:true\:true
 NVIC.DMA1_Channel2_3_IRQn=true\:0\:0\:false\:false\:true\:false\:true\:true
 NVIC.EXTI0_1_IRQn=true\:0\:0\:false\:false\:true\:true\:true\:true
