@@ -8,6 +8,10 @@
     <link rel="icon" href="data:;base64,=">
 
     <style>
+        * {
+            box-sizing: border-box;
+        }
+
         body {
             margin: 0;
             font-family: Arial, sans-serif;
@@ -16,62 +20,95 @@
         }
 
         .container {
-            width: 80vw;
-            max-width: 1400px;
+            width: min(96vw, 1500px);
             margin: auto;
-            padding: 24px;
+            padding: 10px 14px;
         }
 
         h1 {
             text-align: center;
-            margin-bottom: 24px;
+            margin: 0 0 6px;
             font-weight: 500;
+            font-size: 18px;
         }
 
         .grid {
             display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 20px;
+            grid-template-columns: 1fr;
+            gap: 3px;
             width: 100%;
         }
 
         .card {
             background: white;
-            border-radius: 10px;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, .08);
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
+            border-radius: 6px;
+            box-shadow: 0 1px 4px rgba(0, 0, 0, .08);
+            display: grid;
+            grid-template-columns: minmax(125px, 1fr) 210px minmax(100px, 1fr);
             align-items: center;
-            aspect-ratio: 2;
-            padding: 16px;
+            min-height: 40px;
+            padding: 4px 12px;
         }
 
         .label {
-            font-size: 1.5vw;
+            font-size: 15px;
             color: #666;
-            margin-bottom: 10px;
+            margin: 0;
         }
 
         .value {
-            font-size: clamp(2rem, 4vw, 3rem);
+            font: 600 20px ui-monospace, "DejaVu Sans Mono", Consolas, monospace;
             font-weight: 600;
+            font-variant-numeric: tabular-nums;
+            white-space: pre;
+            text-align: left;
         }
 
         .value_raw {
-            font-size: 1vw;
+            font: 13px ui-monospace, SFMono-Regular, Consolas, monospace;
             color: #888;
+        }
+
+        .raw-values {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) 4ch;
+            gap: 1px 4px;
+            align-items: baseline;
+        }
+
+        .raw-number {
+            text-align: right;
+        }
+
+        .raw-unit {
+            text-align: left;
         }
 
         .unit {
-            font-size: 1.5vw;
-            margin-top: 6px;
-            margin-bottom: 6px;
+            font-size: 13px;
+            margin: 0 0 0 5px;
             color: #888;
         }
 
+        .reading {
+            display: grid;
+            font-family: ui-monospace, "DejaVu Sans Mono", Consolas, monospace;
+            font-size: 20px;
+            grid-template-columns: 12ch 5ch;
+            align-items: baseline;
+            gap: 4px;
+        }
+
+        .reading .value {
+            width: 12ch;
+        }
+
+        .reading .unit {
+            text-align: left;
+        }
+
         .buttons {
-            margin-top: 28px;
+            margin-top: 5px;
             display: flex;
             justify-content: center;
             gap: 12px;
@@ -79,8 +116,8 @@
         }
 
         button {
-            padding: 12px 20px;
-            font-size: 1.5vw;
+            padding: 6px 12px;
+            font-size: 14px;
             border: none;
             border-radius: 10px;
             background: #2d6cdf;
@@ -92,35 +129,20 @@
             background: #245bc0;
         }
 
-        @media (max-width:900px) {
-            .grid {
-                grid-template-columns: repeat(2, 1fr);
-            }
-        }
-
-        @media (max-width:600px) {
-            .container {
-                width: 95vw;
-            }
-
-            .grid {
-                grid-template-columns: 1fr;
-            }
-        }
-
         .slider_card {
             background: white;
             border-radius: 10px;
             box-shadow: 0 2px 8px rgba(0, 0, 0, .08);
-            margin-top: 20px;
-            padding: 16px 24px 24px;
-            display: flex;
-            flex-direction: column;
+            margin-top: 5px;
+            padding: 5px 10px 8px;
+            display: grid;
+            grid-template-columns: auto auto 1fr;
             align-items: center;
+            gap: 10px;
         }
 
         .slider_card .value {
-            margin-bottom: 16px;
+            margin: 0;
         }
 
         input[type="range"] {
@@ -132,6 +154,60 @@
             background: transparent;
             cursor: pointer;
             margin: 0;
+        }
+
+        @media (max-height: 650px) {
+            .container {
+                padding-top: 3px;
+                padding-bottom: 3px;
+            }
+
+            .grid {
+                gap: 2px;
+            }
+
+            .card {
+                min-height: 30px;
+                padding: 2px 8px;
+            }
+
+            .buttons,
+            .slider_card {
+                margin-top: 3px;
+            }
+
+            .slider_card {
+                padding: 3px 8px 5px;
+            }
+
+            input[type="range"] {
+                height: 18px;
+            }
+        }
+
+        @media (max-width: 420px) {
+            .card {
+                grid-template-columns: minmax(75px, 1fr) 120px minmax(0, 1fr);
+                padding-inline: 6px;
+            }
+
+            .reading {
+                font-size: 14px;
+                grid-template-columns: 12ch 4ch;
+                gap: 2px;
+            }
+
+            .reading .value {
+                font-size: 14px;
+            }
+
+            .label {
+                font-size: 12px;
+            }
+
+            .value_raw {
+                font-size: 10px;
+            }
         }
 
         input[type="range"]::-webkit-slider-runnable-track {
@@ -184,25 +260,45 @@
 
     <script>
         const ws = new WebSocket("ws://" + location.host + "/websocket")
+        let currentIsZero = true
 
         ws.onmessage = (event) => {
             const data = JSON.parse(event.data)
 
-            document.getElementById("thrust").textContent = data.thrust.toFixed(3)
-            document.getElementById("thrust_raw").textContent = data.thrust_raw + " LSB"
-            document.getElementById("torque").textContent = data.torque.toFixed(5)
-            document.getElementById("torque_raw1").textContent = data.torque_raw1 + " LSB"
-            document.getElementById("torque_raw2").textContent = data.torque_raw2 + " LSB"
-            document.getElementById("velocity").textContent = data.vel.toFixed(0)
-            document.getElementById("velocity_raw").textContent = data.vel_raw.toFixed(2) + " Hz"
-            document.getElementById("temperature").textContent = data.temp.toFixed(1)
-            document.getElementById("temperature_raw1").textContent = data.temp_raw1 + " LSB"
-            document.getElementById("temperature_raw2").textContent = data.temp_raw2.toFixed(0) + " ohm"
-            document.getElementById("voltage").textContent = data.volt.toFixed(2)
-            document.getElementById("current").textContent = data.curr.toFixed(2)
+            document.getElementById("thrust").textContent = formatValue(data.thrust, 3, true)
+            document.getElementById("thrust_raw").textContent = data.thrust_raw
+            document.getElementById("torque").textContent = formatValue(data.torque, 5, true)
+            document.getElementById("torque_raw1").textContent = data.torque_raw1
+            document.getElementById("torque_raw2").textContent = data.torque_raw2
+            document.getElementById("velocity").textContent = formatValue(data.vel, 2)
+            document.getElementById("velocity_raw").textContent = Math.max(0, data.vel_raw).toFixed(2)
+            document.getElementById("temperature").textContent = formatValue(data.temp, 1)
+            document.getElementById("temperature_raw1").textContent = Math.max(0, data.temp_raw1)
+            document.getElementById("temperature_raw2").textContent = Math.max(0, data.temp_raw2).toFixed(0)
+            document.getElementById("voltage").textContent = formatValue(data.volt, 2)
+            document.getElementById("current").textContent = formatCurrent(data.curr)
+            document.getElementById("humidity").textContent = formatValue(data.env1_hum, 1)
+            document.getElementById("env1_temperature").textContent = formatValue(data.env1_temp, 1)
+            document.getElementById("pressure").textContent = formatValue(data.env2_press / 100, 1)
+            document.getElementById("env2_temperature").textContent = formatValue(data.env2_temp, 1)
 
             document.getElementById("slider_value").textContent = (100 * data.gen).toFixed(0) + "%"
             document.getElementById("slider").value = 1000 * data.gen
+        }
+
+        function formatValue(value, decimals, allowNegative = false) {
+            if (!allowNegative) value = Math.max(0, value)
+            const rounded = Number(Math.abs(value).toFixed(decimals))
+            const sign = allowNegative ? (value < 0 && rounded !== 0 ? "-" : "+") : ""
+            const [integer, fraction] = rounded.toFixed(decimals).split(".")
+            return (sign + integer).padStart(5, " ") + (fraction === undefined ? "" : "." + fraction)
+        }
+
+        function formatCurrent(value) {
+            if (value < 0) currentIsZero = true
+            else if (currentIsZero && value > 0.015) currentIsZero = false
+            else if (!currentIsZero && value < 0.005) currentIsZero = true
+            return formatValue(currentIsZero ? 0 : value, 2)
         }
 
         function sendCommand(cmd) {
@@ -225,44 +321,102 @@
 
             <div class="card">
                 <div class="label">Thrust</div>
-                <div class="value" id="thrust">0.00</div>
-                <div class="unit">N</div>
-                <div class="value_raw" id="thrust_raw">0 LSB</div>
+                <div class="reading">
+                    <div class="value" id="thrust">0.00</div>
+                    <div class="unit">N</div>
+                </div>
+                <div class="value_raw raw-values">
+                    <span class="raw-number" id="thrust_raw">0</span><span class="raw-unit">LSB</span>
+                </div>
             </div>
 
             <div class="card">
                 <div class="label">Torque</div>
-                <div class="value" id="torque">0.00</div>
-                <div class="unit">Nm</div>
-                <div class="value_raw" id="torque_raw1">0 LSB</div>
-                <div class="value_raw" id="torque_raw2">0 LSB</div>
+                <div class="reading">
+                    <div class="value" id="torque">0.00</div>
+                    <div class="unit">Nm</div>
+                </div>
+                <div class="value_raw raw-values">
+                    <span class="raw-number" id="torque_raw1">0</span><span class="raw-unit">LSB</span>
+                    <span class="raw-number" id="torque_raw2">0</span><span class="raw-unit">LSB</span>
+                </div>
             </div>
 
             <div class="card">
-                <div class="label">Angular Velocity</div>
-                <div class="value" id="velocity">0.00</div>
-                <div class="unit">rad/s</div>
-                <div class="value_raw" id="velocity_raw">0 Hz</div>
+                <div class="label">Velocity</div>
+                <div class="reading">
+                    <div class="value" id="velocity">0.00</div>
+                    <div class="unit">rad/s</div>
+                </div>
+                <div class="value_raw raw-values">
+                    <span class="raw-number" id="velocity_raw">0</span><span class="raw-unit">Hz</span>
+                </div>
             </div>
 
             <div class="card">
-                <div class="label">Temperature</div>
-                <div class="value" id="temperature">0.0</div>
-                <div class="unit">°C</div>
-                <div class="value_raw" id="temperature_raw1">0 LSB</div>
-                <div class="value_raw" id="temperature_raw2">0 ohm</div>
+                <div class="label">Temperature (Motor)</div>
+                <div class="reading">
+                    <div class="value" id="temperature">0.0</div>
+                    <div class="unit">°C</div>
+                </div>
+                <div class="value_raw raw-values">
+                    <span class="raw-number" id="temperature_raw1">0</span><span class="raw-unit">LSB</span>
+                    <span class="raw-number" id="temperature_raw2">0</span><span class="raw-unit">ohm</span>
+                </div>
             </div>
 
             <div class="card">
                 <div class="label">Voltage</div>
-                <div class="value" id="voltage">0.00</div>
-                <div class="unit">V</div>
+                <div class="reading">
+                    <div class="value" id="voltage">0.00</div>
+                    <div class="unit">V</div>
+                </div>
+                <div class="raw-empty"></div>
             </div>
 
             <div class="card">
                 <div class="label">Current</div>
-                <div class="value" id="current">0.00</div>
-                <div class="unit">A</div>
+                <div class="reading">
+                    <div class="value" id="current">0.00</div>
+                    <div class="unit">A</div>
+                </div>
+                <div class="raw-empty"></div>
+            </div>
+
+            <div class="card">
+                <div class="label">Humidity</div>
+                <div class="reading">
+                    <div class="value" id="humidity">0.0</div>
+                    <div class="unit">% RH</div>
+                </div>
+                <div class="raw-empty"></div>
+            </div>
+
+            <div class="card">
+                <div class="label">Temperature (Humidity Sensor)</div>
+                <div class="reading">
+                    <div class="value" id="env1_temperature">0.0</div>
+                    <div class="unit">°C</div>
+                </div>
+                <div class="raw-empty"></div>
+            </div>
+
+            <div class="card">
+                <div class="label">Pressure</div>
+                <div class="reading">
+                    <div class="value" id="pressure">0.0</div>
+                    <div class="unit">hPa</div>
+                </div>
+                <div class="raw-empty"></div>
+            </div>
+
+            <div class="card">
+                <div class="label">Temperature (Pressure Sensor)</div>
+                <div class="reading">
+                    <div class="value" id="env2_temperature">0.0</div>
+                    <div class="unit">°C</div>
+                </div>
+                <div class="raw-empty"></div>
             </div>
 
         </div>
