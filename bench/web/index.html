@@ -2,77 +2,102 @@
 <html>
 
 <head>
-    <title>Dashboard</title>
+    <title>Motor Test Bench</title>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="icon" href="data:;base64,=">
 
     <style>
+        :root {
+            color-scheme: light;
+            --paper: #fff;
+            --ink: #000;
+            --muted: #000;
+            --rule: #000;
+            --accent: #000;
+            --mono: ui-monospace, "DejaVu Sans Mono", "Liberation Mono", Consolas, monospace;
+        }
+
         * {
             box-sizing: border-box;
         }
 
         body {
             margin: 0;
-            font-family: Arial, sans-serif;
-            background: #f5f5f5;
-            color: #222;
+            background: var(--paper);
+            color: var(--ink);
+            font-family: var(--mono);
+            font-size: 14px;
+            line-height: 1.45;
+            font-variant-numeric: tabular-nums;
+        }
+
+        button,
+        input {
+            font: inherit;
         }
 
         .container {
-            width: min(96vw, 1500px);
-            margin: auto;
-            padding: 10px 14px;
+            width: min(100% - 40px, 920px);
+            margin: 0 auto;
+            padding: 30px 0 36px;
         }
 
-        h1 {
-            text-align: center;
-            margin: 0 0 6px;
-            font-weight: 500;
-            font-size: 18px;
+        .container::before {
+            content: "MOTOR TEST BENCH";
+            display: block;
+            padding: 0 0 10px;
+            margin-bottom: 18px;
+            border-bottom: 2px solid var(--ink);
+            font-size: 12px;
+            font-weight: 700;
+            letter-spacing: .04em;
         }
 
         .grid {
             display: grid;
             grid-template-columns: 1fr;
-            gap: 3px;
             width: 100%;
+            border: 2px solid var(--ink);
+            box-shadow: 4px 4px 0 var(--ink);
         }
 
         .card {
-            background: white;
-            border-radius: 6px;
-            box-shadow: 0 1px 4px rgba(0, 0, 0, .08);
             display: grid;
-            grid-template-columns: minmax(125px, 1fr) 210px minmax(100px, 1fr);
+            grid-template-columns: minmax(190px, 1fr) minmax(200px, 240px) minmax(130px, .7fr);
             align-items: center;
-            min-height: 40px;
-            padding: 4px 12px;
+            min-height: 47px;
+            padding: 7px 10px;
+            border-bottom: 1px solid var(--rule);
+        }
+
+        .card:nth-child(even) {
+            background: #fff;
         }
 
         .label {
-            font-size: 15px;
-            color: #666;
             margin: 0;
+            color: var(--muted);
+            font-size: 13px;
         }
 
         .value {
-            font: 600 20px ui-monospace, "DejaVu Sans Mono", Consolas, monospace;
-            font-weight: 600;
-            font-variant-numeric: tabular-nums;
+            font-family: var(--mono);
+            font-size: 18px;
+            font-weight: 700;
             white-space: pre;
             text-align: left;
         }
 
         .value_raw {
-            font: 13px ui-monospace, SFMono-Regular, Consolas, monospace;
-            color: #888;
+            color: var(--muted);
+            font-size: 11px;
         }
 
         .raw-values {
             display: grid;
             grid-template-columns: minmax(0, 1fr) 4ch;
-            gap: 1px 4px;
+            gap: 1px 5px;
             align-items: baseline;
         }
 
@@ -85,18 +110,18 @@
         }
 
         .unit {
-            font-size: 13px;
             margin: 0 0 0 5px;
-            color: #888;
+            color: var(--muted);
+            font-size: 12px;
         }
 
         .reading {
             display: grid;
-            font-family: ui-monospace, "DejaVu Sans Mono", Consolas, monospace;
-            font-size: 20px;
             grid-template-columns: 12ch 5ch;
             align-items: baseline;
             gap: 4px;
+            font-family: var(--mono);
+            font-size: 18px;
         }
 
         .reading .value {
@@ -108,37 +133,39 @@
         }
 
         .buttons {
-            margin-top: 5px;
             display: flex;
-            justify-content: center;
-            gap: 12px;
-            flex-wrap: wrap;
+            justify-content: flex-start;
+            margin-top: 18px;
         }
 
         button {
-            padding: 6px 12px;
-            font-size: 14px;
-            border: none;
-            border-radius: 10px;
-            background: #2d6cdf;
-            color: white;
+            padding: 8px 12px;
+            border: 2px solid var(--ink);
+            border-radius: 0;
+            background: transparent;
+            color: var(--ink);
+            font-size: 12px;
+            font-weight: 700;
             cursor: pointer;
+            box-shadow: 4px 4px 0 var(--ink);
         }
 
-        button:hover {
-            background: #245bc0;
+        button:hover,
+        button:focus-visible {
+            background: var(--ink);
+            color: var(--paper);
+            box-shadow: 6px 6px 0 var(--ink);
         }
 
         .slider_card {
-            background: white;
-            border-radius: 10px;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, .08);
-            margin-top: 5px;
-            padding: 5px 10px 8px;
             display: grid;
-            grid-template-columns: auto auto 1fr;
+            grid-template-columns: minmax(130px, auto) 5ch minmax(100px, 1fr);
             align-items: center;
-            gap: 10px;
+            gap: 14px;
+            margin-top: 8px;
+            padding: 9px 10px;
+            border: 2px solid var(--ink);
+            box-shadow: 4px 4px 0 var(--ink);
         }
 
         .slider_card .value {
@@ -151,110 +178,100 @@
             appearance: none;
             width: 100%;
             height: 22px;
+            margin: 0;
             background: transparent;
             cursor: pointer;
-            margin: 0;
-        }
-
-        @media (max-height: 650px) {
-            .container {
-                padding-top: 3px;
-                padding-bottom: 3px;
-            }
-
-            .grid {
-                gap: 2px;
-            }
-
-            .card {
-                min-height: 30px;
-                padding: 2px 8px;
-            }
-
-            .buttons,
-            .slider_card {
-                margin-top: 3px;
-            }
-
-            .slider_card {
-                padding: 3px 8px 5px;
-            }
-
-            input[type="range"] {
-                height: 18px;
-            }
-        }
-
-        @media (max-width: 420px) {
-            .card {
-                grid-template-columns: minmax(75px, 1fr) 120px minmax(0, 1fr);
-                padding-inline: 6px;
-            }
-
-            .reading {
-                font-size: 14px;
-                grid-template-columns: 12ch 4ch;
-                gap: 2px;
-            }
-
-            .reading .value {
-                font-size: 14px;
-            }
-
-            .label {
-                font-size: 12px;
-            }
-
-            .value_raw {
-                font-size: 10px;
-            }
         }
 
         input[type="range"]::-webkit-slider-runnable-track {
             height: 8px;
-            border-radius: 4px;
-            background: linear-gradient(to right, #2d6cdf var(--fill), #ddd var(--fill));
+            border: 1px solid #000;
+            background: linear-gradient(to right, #000 var(--fill), #fff var(--fill));
         }
 
         input[type="range"]::-moz-range-track {
-            height: 8px;
-            border-radius: 4px;
-            background: linear-gradient(to right, #2d6cdf var(--fill), #ddd var(--fill));
+            height: 6px;
+            border: 1px solid #000;
+            background: linear-gradient(to right, #000 var(--fill), #fff var(--fill));
         }
 
         input[type="range"]::-webkit-slider-thumb {
             -webkit-appearance: none;
-            appearance: none;
-            width: 22px;
-            height: 22px;
-            margin-top: -7px;
-            border-radius: 50%;
-            border: none;
-            background: #2d6cdf;
-            box-shadow: 0 1px 4px rgba(0, 0, 0, .3);
+            width: 15px;
+            height: 15px;
+            margin-top: -4px;
+            border: 1px solid var(--paper);
+            border-radius: 0;
+            background: var(--accent);
+            box-shadow: 0 0 0 1px var(--accent);
         }
 
         input[type="range"]::-moz-range-thumb {
-            width: 22px;
-            height: 22px;
-            border-radius: 50%;
-            border: none;
-            background: #2d6cdf;
-            box-shadow: 0 1px 4px rgba(0, 0, 0, .3);
-        }
-
-        input[type="range"]:hover::-webkit-slider-thumb {
-            background: #245bc0;
-        }
-
-        input[type="range"]:hover::-moz-range-thumb {
-            background: #245bc0;
+            width: 13px;
+            height: 13px;
+            border: 1px solid var(--paper);
+            border-radius: 0;
+            background: var(--accent);
+            box-shadow: 0 0 0 1px var(--accent);
         }
 
         input[type="range"]:focus-visible {
-            outline: 2px solid #2d6cdf;
+            outline: 2px solid var(--accent);
             outline-offset: 4px;
-            border-radius: 4px;
+        }
+
+        @media (max-width: 620px) {
+            .container {
+                width: min(100% - 24px, 920px);
+                padding-top: 18px;
+            }
+
+            .card {
+                grid-template-columns: minmax(105px, 1fr) minmax(145px, 1.15fr);
+                gap: 2px 8px;
+                padding-inline: 5px;
+            }
+
+            .reading {
+                grid-template-columns: 12ch 5ch;
+                font-size: 16px;
+                gap: 1px;
+            }
+
+            .reading .value {
+                font-size: 16px;
+            }
+
+            .value_raw,
+            .raw-empty {
+                display: none;
+            }
+
+            .label {
+                font-size: 11px;
+            }
+
+            .slider_card {
+                grid-template-columns: minmax(90px, auto) 5ch minmax(70px, 1fr);
+                gap: 8px;
+                padding-inline: 6px;
+            }
+        }
+
+        @media (max-width: 360px) {
+            .card {
+                grid-template-columns: 95px minmax(0, 1fr);
+            }
+
+            .reading {
+                grid-template-columns: 11ch 4ch;
+                font-size: 14px;
+            }
+
+            .reading .value {
+                width: 11ch;
+                font-size: 14px;
+            }
         }
     </style>
 
@@ -284,6 +301,7 @@
 
             document.getElementById("slider_value").textContent = (100 * data.gen).toFixed(0) + "%"
             document.getElementById("slider").value = 1000 * data.gen
+            updateSliderRail()
         }
 
         function formatValue(value, decimals, allowNegative = false) {
@@ -310,7 +328,14 @@
         function sendGenerator() {
             const value = document.getElementById("slider").value
             document.getElementById("slider_value").textContent = (0.1 * value).toFixed(0) + "%"
+            updateSliderRail()
             sendCommand("generator " + value)
+        }
+
+        function updateSliderRail() {
+            const slider = document.getElementById("slider")
+            const percent = 100 * (slider.value - slider.min) / (slider.max - slider.min)
+            slider.style.setProperty("--fill", percent + "%")
         }
     </script>
 </head>
