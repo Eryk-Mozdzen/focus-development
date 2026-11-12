@@ -402,7 +402,7 @@ static void ina226_read(ina226_t *ina226, float *voltage, float *current) {
 }
 
 #define DHT22_POWERUP_MS    1000
-#define DHT22_MIN_PERIOD_MS 2000
+#define DHT22_MIN_PERIOD_MS 2500
 #define DHT22_START_LOW_MS  2
 #define DHT22_TIMEOUT_US    100
 #define DHT22_SAMPLE_US     48
