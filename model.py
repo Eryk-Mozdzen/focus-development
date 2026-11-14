@@ -46,22 +46,42 @@ def curve_fit(model, x_data, y_data, **kwargs):
     return popt, pcov, keep
 
 
-df = (
-    pd.read_csv(sys.argv[1], parse_dates=["timestamp"])
-    .drop(columns=["focus_voltage", "focus_velocity", "setpoint_pwm"])
-    # .drop(columns=["focus_voltage", "focus_velocity", "setpoint_torque"])
-    .replace([np.inf, -np.inf], np.nan)
-    .dropna()
-)
+def calc_air_density(p_pa, t_c, rh_percent):
+    """
+    Moist air density [kg/m^3]
+    p_pa       : absolute station pressure [Pa]
+    t_c        : temperature [°C]
+    rh_percent : relative humidity [%]
+    """
+    Rd = 287.058  # J/(kg·K), dry air
+    Rv = 461.495  # J/(kg·K), water vapor
+    T = t_c + 273.15
+    p_sat = 610.78 * 10 ** ((7.5 * t_c) / (t_c + 237.3))
+    p_v = rh_percent / (100 * p_sat)
+    p_d = p_pa - p_v
+    return (p_d / (Rd * T)) + (p_v / (Rv * T))
 
-w = np.linspace(0, max(df["true_velocity"]), 100)
 
-[kf], _, kf_keep = curve_fit(
-    lambda w, k: k * (w**2), df["true_velocity"], df["true_thrust"]
+data = pd.read_csv(sys.argv[1], parse_dates=["timestamp"])
+
+[air_pressure], _, _ = curve_fit(lambda _, p: p, data["timestamp"], data["pressure"])
+[air_humidity], _, _ = curve_fit(lambda _, h: h, data["timestamp"], data["humidity"])
+[air_temperature], _, _ = curve_fit(
+    lambda _, t: t, data["timestamp"], data["temperature_pressure"]
 )
-[kt], _, kt_keep = curve_fit(
-    lambda w, k: k * (w**2), df["true_velocity"], df["true_torque"]
-)
+air_density = calc_air_density(air_pressure, air_temperature, air_humidity)
+
+print(f"   air pressure {0.01*air_pressure:8.3f} hPa")
+print(f"   air humidity {air_humidity:8.3f} % RH")
+print(f"air temperature {air_temperature:8.3f} deg C")
+print(f"    air density {air_density:8.3f} km/m^3")
+
+df = data[["velocity", "thrust", "torque"]].copy().dropna()
+
+w = np.linspace(0, max(df["velocity"]), 100)
+
+[kf], _, kf_keep = curve_fit(lambda w, k: k * (w**2), df["velocity"], df["thrust"])
+[kt], _, kt_keep = curve_fit(lambda w, k: k * (w**2), df["velocity"], df["torque"])
 
 print(f"kf = {kf:e}")
 print(f"kt = {kt:e}")
@@ -69,8 +89,8 @@ print(f"kt = {kt:e}")
 plt.figure()
 plt.plot(w, kf * (w**2), label="model", c="red")
 plt.scatter(
-    df["true_velocity"].iloc[kf_keep],
-    df["true_thrust"].iloc[kf_keep],
+    df["velocity"].iloc[kf_keep],
+    df["thrust"].iloc[kf_keep],
     label="samples ok",
     c="black",
     s=1,
@@ -79,8 +99,8 @@ plt.autoscale()
 xlim = plt.xlim()
 ylim = plt.ylim()
 plt.scatter(
-    df["true_velocity"].iloc[~kf_keep],
-    df["true_thrust"].iloc[~kf_keep],
+    df["velocity"].iloc[~kf_keep],
+    df["thrust"].iloc[~kf_keep],
     label="samples rejected",
     c="red",
     s=4,
@@ -95,8 +115,8 @@ plt.legend()
 plt.figure()
 plt.plot(w, kt * (w**2), label="model", c="red")
 plt.scatter(
-    df["true_velocity"].iloc[kt_keep],
-    df["true_torque"].iloc[kt_keep],
+    df["velocity"].iloc[kt_keep],
+    df["torque"].iloc[kt_keep],
     label="samples ok",
     c="black",
     s=1,
@@ -105,8 +125,8 @@ plt.autoscale()
 xlim = plt.xlim()
 ylim = plt.ylim()
 plt.scatter(
-    df["true_velocity"].iloc[~kt_keep],
-    df["true_torque"].iloc[~kt_keep],
+    df["velocity"].iloc[~kt_keep],
+    df["torque"].iloc[~kt_keep],
     label="samples rejected",
     c="red",
     s=4,
@@ -118,26 +138,16 @@ plt.ylim(ylim)
 plt.grid()
 plt.legend()
 
+
+df = data[["velocity", "thrust", "torque", "voltage", "current"]].copy().dropna()
+
 rotor_radius = (0.5 * float(sys.argv[2])) * 0.0254
 rotor_field = np.pi * (rotor_radius**2)
 
-# TODO: measure pressure and humidity
-dry_air_gas_constant = 287.05
-air_pressure = 101325  # sea level
-[air_temperature], _, _ = curve_fit(
-    lambda _, temperature: temperature,
-    df["timestamp"],
-    df["true_temperature"],
-)
-air_density = air_pressure / (dry_air_gas_constant * (air_temperature + 273.15))
-
-print(f"     air temperature {air_temperature:6.3f} deg C")
-print(f"         air density {air_density:6.3f} km/m^3")
-
-df["power_electrical"] = df["true_voltage"].abs() * df["true_current"].abs()
-df["power_mechanical"] = df["true_torque"].abs() * df["true_velocity"].abs()
-df["power_induced"] = df["true_thrust"].abs() * np.sqrt(
-    df["true_thrust"].abs() / (2 * air_density * rotor_field)
+df["power_electrical"] = df["voltage"].abs() * df["current"].abs()
+df["power_mechanical"] = df["torque"].abs() * df["velocity"].abs()
+df["power_induced"] = df["thrust"].abs() * np.sqrt(
+    df["thrust"].abs() / (2 * air_density * rotor_field)
 )
 df["drive_efficiency"] = df["power_mechanical"] / df["power_electrical"]
 df["propeller_efficiency"] = df["power_induced"] / df["power_mechanical"]
@@ -149,7 +159,7 @@ def drive_eff_model(torque, a, b, c):
 
 eff_param, _, eff_keep = curve_fit(
     drive_eff_model,
-    df["true_torque"].abs(),
+    df["torque"].abs(),
     df["drive_efficiency"],
 )
 eff_max_tt = np.sqrt(eff_param[1] / eff_param[2])
@@ -158,7 +168,7 @@ print(
     f"    drive efficiency {100*drive_eff_model(eff_max_tt, *eff_param):.0f}% (peak) for {eff_max_tt:.5f} Nm"
 )
 
-t = np.linspace(0, max(df["true_torque"].abs().max(), eff_max_tt), 100)
+t = np.linspace(0, max(df["torque"].abs().max(), eff_max_tt), 100)
 
 plt.figure()
 plt.plot(t, 100 * drive_eff_model(t, *eff_param), c="red", label="model")
@@ -170,14 +180,14 @@ plt.axhline(
     label="peak",
 )
 plt.scatter(
-    df["true_torque"].iloc[eff_keep].abs(),
+    df["torque"].iloc[eff_keep].abs(),
     100 * df["drive_efficiency"].iloc[eff_keep],
     label="samples ok",
     c="black",
     s=1,
 )
 plt.scatter(
-    df["true_torque"].iloc[~eff_keep].abs(),
+    df["torque"].iloc[~eff_keep].abs(),
     100 * df["drive_efficiency"].iloc[~eff_keep],
     label="samples rejected",
     c="red",
@@ -192,21 +202,21 @@ plt.legend()
 
 [eff], _, eff_keep = curve_fit(
     lambda _, eta: eta,
-    df["true_velocity"],
+    df["velocity"],
     df["propeller_efficiency"],
 )
 print(f"propeller efficiency {100*eff:.0f}%")
 plt.figure()
 plt.plot(w, 100 * eff * np.ones_like(w), c="red", label="model")
 plt.scatter(
-    df["true_velocity"].iloc[eff_keep],
+    df["velocity"].iloc[eff_keep],
     100 * df["propeller_efficiency"].iloc[eff_keep],
     label="samples ok",
     c="black",
     s=1,
 )
 plt.scatter(
-    df["true_velocity"].iloc[~eff_keep],
+    df["velocity"].iloc[~eff_keep],
     100 * df["propeller_efficiency"].iloc[~eff_keep],
     label="samples rejected",
     c="red",
@@ -219,38 +229,41 @@ plt.ylim([0, 100])
 plt.grid()
 plt.legend()
 
-model2, _, model2_keep = curve_fit(
-    lambda x, a, b: (a * x) + b, df["setpoint_torque"], df["true_torque"]
-)
-torque = np.linspace(df["setpoint_torque"].min(), df["setpoint_torque"].max(), 100)
-print(f"torque setpoint slope {model2[0]:.3f}")
+if len(data[["torque", "setpoint_torque"]].copy().dropna()) > 0:
+    df = data[["torque", "setpoint_torque"]].copy().dropna()
 
-plt.figure()
-plt.plot(torque, torque, label="model y=x", c="red", linestyle="--")
-plt.plot(torque, (model2[0] * torque) + model2[1], label="model y=ax+b", c="red")
-plt.scatter(
-    df["setpoint_torque"].iloc[model2_keep],
-    df["true_torque"].iloc[model2_keep],
-    label="samples ok",
-    c="black",
-    s=1,
-)
-plt.autoscale()
-xlim = plt.xlim()
-ylim = plt.ylim()
-plt.scatter(
-    df["setpoint_torque"].iloc[~model2_keep],
-    df["true_torque"].iloc[~model2_keep],
-    label="samples rejected",
-    c="red",
-    s=4,
-)
-plt.xlabel("setpoint torque [Nm]")
-plt.ylabel("true torque [Nm]")
-plt.xlim(xlim)
-plt.ylim(ylim)
-plt.grid()
-plt.legend()
+    model, _, model_keep = curve_fit(
+        lambda x, a, b: (a * x) + b, df["setpoint_torque"], df["torque"]
+    )
+    torque = np.linspace(df["setpoint_torque"].min(), df["setpoint_torque"].max(), 100)
+    print(f"torque setpoint slope {model[0]:.3f}")
+
+    plt.figure()
+    plt.plot(torque, torque, label="model y=x", c="red", linestyle="--")
+    plt.plot(torque, (model[0] * torque) + model[1], label="model y=ax+b", c="red")
+    plt.scatter(
+        df["setpoint_torque"].iloc[model_keep],
+        df["torque"].iloc[model_keep],
+        label="samples ok",
+        c="black",
+        s=1,
+    )
+    plt.autoscale()
+    xlim = plt.xlim()
+    ylim = plt.ylim()
+    plt.scatter(
+        df["setpoint_torque"].iloc[~model_keep],
+        df["torque"].iloc[~model_keep],
+        label="samples rejected",
+        c="red",
+        s=4,
+    )
+    plt.xlabel("setpoint torque [Nm]")
+    plt.ylabel("true torque [Nm]")
+    plt.xlim(xlim)
+    plt.ylim(ylim)
+    plt.grid()
+    plt.legend()
 
 prediction = pd.DataFrame({"desired thrust": [5, 10, 15, 20]})
 prediction["motor velocity"] = np.sqrt(prediction["desired thrust"] / kf)

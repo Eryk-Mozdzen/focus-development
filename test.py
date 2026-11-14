@@ -31,12 +31,16 @@ class Bus:
     def __init__(self):
         self.lock = asyncio.Lock()
         self.values = {
-            "true_thrust": None,
-            "true_torque": None,
-            "true_velocity": None,
-            "true_temperature": None,
-            "true_voltage": None,
-            "true_current": None,
+            "thrust": None,
+            "torque": None,
+            "velocity": None,
+            "temperature_motor": None,
+            "voltage": None,
+            "current": None,
+            "humidity": None,
+            "temperature_humidity": None,
+            "pressure": None,
+            "temperature_pressure": None,
             "focus_voltage": None,
             "focus_velocity": None,
             "setpoint_torque": None,
@@ -50,7 +54,8 @@ class Bus:
         return q
 
     async def put(self, item):
-        timestamp, data = item
+        timestamp = datetime.datetime.now(datetime.UTC)
+        data = item
 
         async with self.lock:
             self.values.update(data)
@@ -83,12 +88,9 @@ class Experiment:
 
             await focus.set(self.value)
             await queue.put(
-                (
-                    datetime.datetime.now(datetime.UTC),
-                    {
-                        "setpoint_torque": self.value,
-                    },
-                )
+                {
+                    "setpoint_torque": self.value,
+                }
             )
             await asyncio.sleep(self.step_duration)
 
@@ -109,12 +111,9 @@ class Experiment:
 
             await bench.generator(self.value)
             await queue.put(
-                (
-                    datetime.datetime.now(datetime.UTC),
-                    {
-                        "setpoint_pwm": self.value,
-                    },
-                )
+                {
+                    "setpoint_pwm": self.value,
+                }
             )
             await asyncio.sleep(self.step_duration)
 
@@ -166,13 +165,10 @@ class Focus:
                 continue
             values = struct.unpack("<9f", decoded)
             await queue.put(
-                (
-                    datetime.datetime.now(datetime.UTC),
-                    {
-                        "focus_voltage": values[2],
-                        "focus_velocity": values[1],
-                    },
-                )
+                {
+                    "focus_voltage": values[2],
+                    "focus_velocity": values[1],
+                }
             )
 
     async def send(self, command, ignore_lines=0):
@@ -210,17 +206,18 @@ class Bench:
                 data = json.loads(message)
 
                 await queue.put(
-                    (
-                        datetime.datetime.now(datetime.UTC),
-                        {
-                            "true_thrust": data["thrust"],
-                            "true_torque": data["torque"],
-                            "true_velocity": data["vel"],
-                            "true_temperature": data["temp"],
-                            "true_voltage": data["volt"],
-                            "true_current": data["curr"],
-                        },
-                    )
+                    {
+                        "thrust": data["thrust"],
+                        "torque": data["torque"],
+                        "velocity": data["vel"],
+                        "temperature_motor": data["temp"],
+                        "voltage": data["volt"],
+                        "current": data["curr"],
+                        "humidity": data["env1_hum"],
+                        "temperature_humidity": data["env1_temp"],
+                        "pressure": data["env2_press"],
+                        "temperature_pressure": data["env2_temp"],
+                    }
                 )
         except asyncio.CancelledError:
             raise
@@ -365,23 +362,23 @@ class Recorder:
 
 async def main():
     async with (
-        Focus("192.168.8.1") as focus,
+        # Focus("192.168.8.1") as focus,
         Bench("ws://192.168.7.2:80/websocket") as bench,
     ):
         bus = Bus()
 
         experiment = Experiment()
-        plotter1 = Plotter(["true_velocity", "focus_velocity"])
-        plotter2 = Plotter(["setpoint_torque", "true_torque"])
+        # plotter1 = Plotter(["true_velocity", "focus_velocity"])
+        # plotter2 = Plotter(["setpoint_torque", "true_torque"])
         recorder = Recorder()
 
         tasks = [
-            asyncio.create_task(experiment.run_focus(bus, focus)),
-            # asyncio.create_task(experiment.run_esc(bus, bench)),
-            asyncio.create_task(focus.run(bus)),
+            # asyncio.create_task(experiment.run_focus(bus, focus)),
+            asyncio.create_task(experiment.run_esc(bus, bench)),
+            # asyncio.create_task(focus.run(bus)),
             asyncio.create_task(bench.run(bus)),
-            asyncio.create_task(plotter1.run(bus.subscribe())),
-            asyncio.create_task(plotter2.run(bus.subscribe())),
+            # asyncio.create_task(plotter1.run(bus.subscribe())),
+            # asyncio.create_task(plotter2.run(bus.subscribe())),
             asyncio.create_task(recorder.run(bus.subscribe())),
         ]
 
